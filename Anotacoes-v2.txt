@@ -405,10 +405,38 @@ Fechamento da Fase 1 (2026-09-12):
   Aceites da Fase 1: TODOS verificados.
 
 
+INCREMENTO 2 — USABILIDADE (mapa), 2026-09-12:
+  VerRelatorio.cs reescrito: Leaflet 1.9.4 via unpkg + tiles OpenStreetMap.
+  Sem chave de API, sem custo — atende ao aceite do roteiro.
+  Marcadores por colaborador com cor propria, polilinha ligando os pontos em
+  ordem cronologica, ultimo ponto destacado, popup com celular/hora/coordenadas,
+  legenda com contagem. Tabela mantida abaixo do mapa (o Incremento 3 precisa dela).
+  fitBounds ajusta o zoom; com 1 ponto usa setView(16) para nao dar zoom infinito.
+  Verificado: HTTP 200, leaflet@1.9.4 presente, tile.openstreetmap.org presente,
+  4 pontos no array, nenhuma chave de API no HTML.
+  AVISO NOVO DO func publish: ".NET 9 will reach end-of-life on novembro 09 2026"
+  — mesma data do .NET 8. O rebaixamento nao ganhou tempo, so viabilidade.
+  Reforca que a saida e migrar para Flex Consumption.  
   
   
-  
-  
+INCREMENTO 3 — HISTÓRICO (filtro por data), 2026-09-12:
+  Filtro montado como uma clausula "PartitionKey eq 'yyyy-MM-dd'" por dia do
+  intervalo, unidas por "or" → consulta de particao, nao varredura da tabela.
+  Formulario GET com input type=date: o filtro vira URL compartilhavel.
+  Decisoes: bordas INCLUSIVAS nas duas pontas; padrao "hoje" sem parametro;
+  datas invertidas sao trocadas com aviso; data invalida cai no padrao com
+  aviso na pagina (nunca 400); limite de 31 particoes por consulta.
+  8 bordas testadas, todas conforme:
+    sem parametro → 11 reg / 1 particao
+    12 a 12       → 11 reg / 1 particao
+    10 a 14       → 11 reg / 5 particoes
+    11 a 11       → vazio  / 1 particao  (borda inferior nao vaza)
+    13 a 13       → vazio  / 1 particao  (borda superior nao vaza)
+    14 a 10       → 11 reg / 5 particoes / 1 aviso de troca
+    datas lixo    → 11 reg / 1 particao  / 2 avisos
+    60 dias       → limitado a 31 particoes / 1 aviso
+  Observacao: o meta refresh de 30s foi REMOVIDO nesta versao — recarregar
+  sozinho apagaria o filtro que o gestor acabou de escolher.  
 
 ────────────────────────────────────────────────────────────────────────────────
   SEÇÃO 9 — PRÓXIMOS PASSOS

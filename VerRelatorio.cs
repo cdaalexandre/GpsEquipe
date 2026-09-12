@@ -16,6 +16,7 @@ namespace GpsEquipe;
 public class VerRelatorio
 {
     private readonly ILogger<VerRelatorio> _logger;
+    private const int MaximoDeDias = 31;
 
     public VerRelatorio(ILogger<VerRelatorio> logger)
     {
@@ -33,47 +34,100 @@ public class VerRelatorio
             return new StatusCodeResult(500);
         }
 
+        var inv = CultureInfo.InvariantCulture;
+        var fuso = TimeSpan.FromHours(-3);
+        var hoje = DateTimeOffset.UtcNow.ToOffset(fuso).Date;
+        var avisos = new List<string>();
+
+        // Parametros da query string. Ausentes ou invalidos caem no padrao "hoje".
+        var inicio = LerData(req.Query["inicio"], hoje, "inicio", avisos);
+        var fim = LerData(req.Query["fim"], hoje, "fim", avisos);
+
+        // Borda invertida: troca em vez de devolver vazio, que confundiria o gestor.
+        if (fim < inicio)
+        {
+            var troca = inicio; inicio = fim; fim = troca;
+            avisos.Add("As datas estavam invertidas e foram trocadas.");
+        }
+
+        // Limite de partições por consulta. Bordas INCLUSIVAS nas duas pontas.
+        var dias = (int)(fim - inicio).TotalDays + 1;
+        if (dias > MaximoDeDias)
+        {
+            fim = inicio.AddDays(MaximoDeDias - 1);
+            dias = MaximoDeDias;
+            avisos.Add("Intervalo limitado a " + MaximoDeDias + " dias; a data final foi ajustada.");
+        }
+
+        // Uma cláusula por partição: consulta de partição, não varredura da tabela.
+        var particoes = Enumerable.Range(0, dias)
+            .Select(d => inicio.AddDays(d).ToString("yyyy-MM-dd", inv))
+            .ToList();
+        var filtro = string.Join(" or ", particoes.Select(p => "PartitionKey eq '" + p + "'"));
+
         var tabela = new TableClient(conexao, "Coordenadas");
         var registros = new List<CoordenadaEntidade>();
-        await foreach (var item in tabela.QueryAsync<CoordenadaEntidade>())
+        await foreach (var item in tabela.QueryAsync<CoordenadaEntidade>(filtro))
         {
             registros.Add(item);
         }
 
-        var fuso = TimeSpan.FromHours(-3);
-        var inv = CultureInfo.InvariantCulture;
+        _logger.LogInformation("Consulta de {dias} particao(oes) retornou {n} registro(s).", dias, registros.Count);
+
+        var sInicio = inicio.ToString("yyyy-MM-dd", inv);
+        var sFim = fim.ToString("yyyy-MM-dd", inv);
         var html = new StringBuilder();
 
         html.Append("<!DOCTYPE html><html lang='pt-BR'><head><meta charset='utf-8'>");
         html.Append("<meta name='viewport' content='width=device-width, initial-scale=1'>");
-        html.Append("<meta http-equiv='refresh' content='30'>");
         html.Append("<title>Relatorio de Rastreamento</title>");
-        // Leaflet e OpenStreetMap: sem chave de API e sem custo.
         html.Append("<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'>");
         html.Append("<script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>");
         html.Append("<style>");
         html.Append("body{font-family:Arial,Helvetica,sans-serif;margin:16px;color:#222}");
         html.Append("h1{font-size:20px;margin:0 0 4px}h2{font-size:16px;margin:24px 0 8px}");
-        html.Append("#mapa{height:60vh;min-height:320px;border:1px solid #bbb;border-radius:6px;margin:12px 0}");
+        html.Append("#mapa{height:55vh;min-height:300px;border:1px solid #bbb;border-radius:6px;margin:12px 0}");
         html.Append("table{border-collapse:collapse;width:100%;max-width:760px}");
         html.Append("th,td{border:1px solid #ccc;padding:6px 8px;font-size:14px;text-align:left}");
         html.Append("th{background:#f0f0f0}.rodape{margin-top:24px;font-size:12px;color:#666}");
         html.Append(".legenda span{display:inline-block;margin-right:14px;font-size:13px}");
         html.Append(".bolinha{width:11px;height:11px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:middle}");
+        html.Append(".filtro{background:#eef1f4;padding:12px;border-radius:6px;margin-bottom:12px}");
+        html.Append(".filtro label{font-size:13px;margin-right:4px}");
+        html.Append(".filtro input{padding:6px;font-size:14px;border:1px solid #bbb;border-radius:4px;margin-right:10px}");
+        html.Append(".filtro button{padding:7px 14px;font-size:14px;border:0;border-radius:4px;background:#1565c0;color:#fff;cursor:pointer;margin-right:6px}");
+        html.Append(".filtro a{font-size:13px;color:#1565c0}");
+        html.Append(".aviso{background:#fff4e5;color:#8a4b00;padding:8px 10px;border-radius:4px;font-size:13px;margin-bottom:10px}");
+        html.Append(".vazio{background:#eef1f4;padding:14px;border-radius:6px}");
         html.Append("</style></head><body>");
         html.Append("<h1>Diretoria de Ensino Centro Oeste - SEDUC/SP</h1>");
-        html.Append("<p>Relatorio de rastreamento de colaboradores. Atualiza automaticamente a cada 30 segundos.</p>");
+        html.Append("<p>Relatorio de rastreamento de colaboradores.</p>");
+
+        // Formulario GET: o proprio filtro vira URL compartilhavel.
+        html.Append("<div class='filtro'><form method='get'>");
+        html.Append("<label for='inicio'>De</label><input type='date' id='inicio' name='inicio' value='").Append(sInicio).Append("'>");
+        html.Append("<label for='fim'>Ate</label><input type='date' id='fim' name='fim' value='").Append(sFim).Append("'>");
+        html.Append("<button type='submit'>Filtrar</button>");
+        html.Append("<a href='?'>hoje</a></form></div>");
+
+        foreach (var a in avisos)
+        {
+            html.Append("<div class='aviso'>").Append(a).Append("</div>");
+        }
 
         if (registros.Count == 0)
         {
-            html.Append("<p>Nenhuma coordenada registrada ate o momento.</p></body></html>");
+            html.Append("<div class='vazio'>Nenhuma coordenada registrada de ")
+                .Append(inicio.ToString("dd/MM/yyyy", inv)).Append(" a ")
+                .Append(fim.ToString("dd/MM/yyyy", inv)).Append(".</div>");
+            html.Append("<p class='rodape'>Particoes consultadas: ").Append(dias)
+                .Append(" | Gerado em ").Append(DateTimeOffset.UtcNow.ToOffset(fuso).ToString("dd/MM/yyyy HH:mm:ss"))
+                .Append("</p></body></html>");
             return new ContentResult { Content = html.ToString(), ContentType = MediaTypeNames.Text.Html, StatusCode = 200 };
         }
 
         html.Append("<div id='mapa'></div><div class='legenda' id='legenda'></div>");
 
-        // Serie de pontos entregue ao JavaScript. O celular ja vem so com digitos
-        // do ReceberCoordenadas, entao nao ha risco de quebrar a string.
         html.Append("<script>var dados=[");
         foreach (var r in registros.OrderBy(x => x.DataHoraUtc))
         {
@@ -144,7 +198,8 @@ if(todos.length===1){
 
         foreach (var grupo in registros.GroupBy(r => r.Celular).OrderBy(g => g.Key))
         {
-            html.Append("<h2>Colaborador: ").Append(grupo.Key).Append("</h2>");
+            html.Append("<h2>Colaborador: ").Append(grupo.Key)
+                .Append(" — ").Append(grupo.Count()).Append(" ponto(s)</h2>");
             html.Append("<table><tr><th>Data e hora (Brasilia)</th><th>Latitude</th><th>Longitude</th></tr>");
             foreach (var r in grupo.OrderByDescending(x => x.DataHoraUtc))
             {
@@ -156,7 +211,10 @@ if(todos.length===1){
             html.Append("</table>");
         }
 
-        html.Append("<p class='rodape'>Total de registros: ").Append(registros.Count)
+        html.Append("<p class='rodape'>Periodo: ").Append(inicio.ToString("dd/MM/yyyy", inv))
+            .Append(" a ").Append(fim.ToString("dd/MM/yyyy", inv))
+            .Append(" | Particoes consultadas: ").Append(dias)
+            .Append(" | Total de registros: ").Append(registros.Count)
             .Append(" | Gerado em ").Append(DateTimeOffset.UtcNow.ToOffset(fuso).ToString("dd/MM/yyyy HH:mm:ss"))
             .Append(" | Mapa: Leaflet + OpenStreetMap</p></body></html>");
 
@@ -166,5 +224,22 @@ if(todos.length===1){
             ContentType = MediaTypeNames.Text.Html,
             StatusCode = 200
         };
+    }
+
+    // Aceita yyyy-MM-dd (formato do input type=date). Vazio usa o padrao em silencio;
+    // valor presente mas invalido usa o padrao E avisa na pagina.
+    private static DateTime LerData(string? valor, DateTime padrao, string nome, List<string> avisos)
+    {
+        if (string.IsNullOrWhiteSpace(valor))
+        {
+            return padrao;
+        }
+        if (DateTime.TryParseExact(valor, "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var d))
+        {
+            return d.Date;
+        }
+        avisos.Add("Data de " + nome + " invalida; usando " + padrao.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture) + ".");
+        return padrao;
     }
 }
