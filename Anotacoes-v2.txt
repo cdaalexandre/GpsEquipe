@@ -1,0 +1,161 @@
+================================================================================
+  ANOTAÇÕES CONSOLIDADAS — PROJETO GpsEquipe (v2 do Rastreio GPS)
+  Ambiente: Windows 11 Pro (notebook PRODESP) + PowerShell 5.1 + Azure for Students
+  Última atualização: 2026-09-12
+  Regra: só entra aqui o que foi EXECUTADO e cujo output foi visto.
+  Nunca gravar connection string, account key ou API key neste arquivo.
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+  SEÇÃO 1 — CONTA AZURE E ASSINATURA
+────────────────────────────────────────────────────────────────────────────────
+Conta ativa (verificada em 2026-09-12):
+  E-mail:       alexandre.calzetta@cs.unicid.edu.br
+  Assinatura:   Azure for Students
+  Subscription: ef10799a-e042-473f-8425-4d967abfbad1
+  Tenant:       38ae2f02-5710-4e12-80bb-83600c3fdf1e (Cruzeiro do Sul Educacional - Acadêmico)
+
+Login (SEMPRE com --tenant; nesta máquina o login simples pode cair na conta PRODESP):
+  az login --tenant 38ae2f02-5710-4e12-80bb-83600c3fdf1e
+  → Selecionar [1] Azure for Students
+
+Guarda de tenant — rodar antes de qualquer az create / delete / publish:
+  az account show --query "{assinatura:name, tenantId:tenantId, usuario:user.name}" -o table
+  Só prosseguir se: Azure for Students + tenant 38ae2f02-... + usuario @cs.unicid.edu.br
+  Observação: --query com tenantDisplayName veio vazio nesta máquina; use tenantId.
+
+Proibido: qualquer script que enumere e apague "todos os resource groups"
+(o azurePurgeAll.ps1 da v1 apagou recursos alheios na assinatura PRODESP).
+
+────────────────────────────────────────────────────────────────────────────────
+  SEÇÃO 2 — TABELA DE NOMES (FIXA)
+────────────────────────────────────────────────────────────────────────────────
+Convenção: base "gpsequipe" + sufixo bad1 (últimos 4 do subscription id, como na v1).
+
+  Resource Group:      GpsEquipe-RG
+  Storage Account:     gpsequipebad1        (13 chars; regra: 3-24, só minúsculas e dígitos)
+  Tabelas:             Coordenadas, FuncionariosPermitidos
+  Function App:        GpsEquipe-App-bad1
+  Repositório GitHub:  cdaalexandre/GpsEquipe
+  Pasta local:         C:\repo\GpsEquipe    (fora do OneDrive de propósito)
+  Região:              brazilsouth (mesma da v1)
+
+Status: NENHUM recurso Azure criado ainda. Disponibilidade global do nome do
+storage e do function app só se confirma no momento do create.
+
+TODOS os nomes da v1 (rastreiogpsstdbad1, RastreioGPS-Std-RG,
+RastreioGPS-App-Std-bad1, tudo com bba7, RastreioGPS-RG) são MORTOS para
+este projeto. Servem só como referência de procedimento.
+
+────────────────────────────────────────────────────────────────────────────────
+  SEÇÃO 3 — AMBIENTE DA MÁQUINA (inventário verificado em 2026-09-12)
+────────────────────────────────────────────────────────────────────────────────
+Máquina: notebook PRODESP, Windows 11 Pro, usuário 155688, admin local: True.
+PowerShell: 5.1.26100.8875
+Transcript de PowerShell ATIVO, gravando em:
+  C:\Users\155688\OneDrive - PRODESP\PowerShell_Logs\
+  → nunca imprimir segredo no console; usar | Set-Clipboard
+
+Comando de inventário usado:
+  foreach ($t in 'az','dotnet','func','git','winget','code','python') { $c = Get-Command $t -ErrorAction SilentlyContinue; "{0,-8} {1}" -f $t, $(if ($c) { $c.Source } else { 'AUSENTE' }) }
+
+Resultado ANTES das instalações:
+  az       AUSENTE
+  dotnet   C:\Program Files\dotnet\dotnet.exe
+  func     AUSENTE
+  git      C:\Program Files\Git\cmd\git.exe        (git version 2.53.0.windows.1)
+  winget   C:\Users\155688\AppData\Local\Microsoft\WindowsApps\winget.exe
+  code     C:\Program Files\Microsoft VS Code\bin\code.cmd
+  python   C:\Users\155688\.pyenv\pyenv-win\shims\python.bat
+
+Instalações feitas (winget, com admin):
+  winget install --id Microsoft.AzureCLI --exact --accept-package-agreements --accept-source-agreements
+    → Azure CLI 2.90.0 (x64 MSI)  |  verificado: az version --output table
+  winget install --id Microsoft.Azure.FunctionsCoreTools --exact --accept-package-agreements --accept-source-agreements
+    → Functions Core Tools 4.14.0  |  verificado: func --version → 4.14.0
+
+Estado atual:
+  az      2.90.0   OK
+  func    4.14.0   OK
+  git     2.53.0   OK
+  dotnet  EXISTE o executável, mas NENHUM SDK encontrado (ver Seção 6)
+
+────────────────────────────────────────────────────────────────────────────────
+  SEÇÃO 4 — REPOSITÓRIO
+────────────────────────────────────────────────────────────────────────────────
+Criado no GitHub (sem README, sem .gitignore, sem license — de propósito):
+  https://github.com/cdaalexandre/GpsEquipe
+
+Local:
+  New-Item -ItemType Directory -Path C:\repo\GpsEquipe -Force
+  Set-Location C:\repo\GpsEquipe
+  git init
+  git remote add origin https://github.com/cdaalexandre/GpsEquipe.git
+  git remote -v
+    origin  https://github.com/cdaalexandre/GpsEquipe.git (fetch)
+    origin  https://github.com/cdaalexandre/GpsEquipe.git (push)
+
+Status: sem commit ainda. Primeiro commit só depois de confirmar que o
+.gitignore gerado pelo func init cobre local.settings.json.
+
+────────────────────────────────────────────────────────────────────────────────
+  SEÇÃO 5 — MODELO DE EXECUÇÃO (decisão travada)
+────────────────────────────────────────────────────────────────────────────────
+A v1 era in-process (Microsoft.NET.Sdk.Functions, func init --dotnet).
+Suporte ao in-process termina em 10/11/2026 (documentação Microsoft).
+A v2 nasce em ISOLATED WORKER:
+  func init . --worker-runtime dotnet-isolated --target-framework <net10.0 ou net8.0>
+  az functionapp create ... --runtime dotnet-isolated --functions-version 4 --runtime-version <ver>
+
+Target framework: PREFERIR .NET 10 (LTS). O próprio func init 4.14.0 avisou:
+  ".NET 8 will reach end-of-life on novembro 09 2026 and will no longer be supported."
+.NET 8 só como fallback documentado se o Functions ou o SDK não oferecerem o 10.
+Verificar suporte antes de decidir:
+  az functionapp list-runtimes --os linux -o table
+
+Código v1 (ReceberCoordenadas.cs, VerRelatorio.cs) será PORTADO, não copiado:
+  [FunctionName] → [Function]; host em Program.cs; pacotes Microsoft.Azure.Functions.Worker.*
+
+────────────────────────────────────────────────────────────────────────────────
+  SEÇÃO 6 — ESTADO ATUAL E PENDÊNCIAS (onde a Fase 0 parou)
+────────────────────────────────────────────────────────────────────────────────
+Tentativa de init (2026-09-12), FALHOU:
+  func init . --worker-runtime dotnet-isolated --target-framework net8.0
+  Erro: "No .NET SDKs were found" / "Error creating project template"
+  Causa: func init chama `dotnet new`, que exige o SDK; só o executável dotnet.exe existe.
+
+Observação não explicada: `func new --help | Select-String -Pattern "net\d"` devolveu
+vazio. Reavaliar depois do SDK instalado.
+
+PRÓXIMO PASSO (não executado ainda):
+  1. Diagnóstico:  dotnet --info; "---SDKs---"; dotnet --list-sdks; "---Runtimes---"; dotnet --list-runtimes
+  2. Instalar o SDK via winget (id a confirmar: Microsoft.DotNet.SDK.10 ou Microsoft.DotNet.SDK.8)
+  3. Abrir janela NOVA de PowerShell (PATH só carrega na abertura)
+  4. Conferir o que o func init falho deixou:  Get-ChildItem C:\repo\GpsEquipe -Force
+  5. Repetir o func init com o target framework decidido
+  6. Conferir .gitignore → primeiro commit → git push -u origin main (ou master, conforme o git init)
+
+Depois disso: Fase 1 = provisionar Azure na ordem das Seções 2 → 3 → 4 → 5 → 6
+das anotações v1, com os nomes da Seção 2 deste arquivo.
+
+────────────────────────────────────────────────────────────────────────────────
+  SEÇÃO 7 — LIÇÕES DESTA MÁQUINA (para não reaprender)
+────────────────────────────────────────────────────────────────────────────────
+- Ferramenta instalada só aparece em janela de PowerShell aberta DEPOIS da
+  instalação. Fechar e reabrir a mesma janela não basta se o install rodou nela.
+- winget funciona com admin local nesta máquina; não precisou de chamado à TI.
+- `curl` no PowerShell 5.1 é alias de Invoke-WebRequest: os testes da Seção 14
+  da v1 não colam. Usar Invoke-RestMethod ou curl.exe.
+- `;` separa comandos; `&&` não existe no PowerShell 5.1.
+- Nunca criar arquivo com `>` (gera UTF-16). Set-Content gera BOM; para .cs/.json/.html
+  sem BOM: [IO.File]::WriteAllText($caminho, $texto, [Text.UTF8Encoding]::new($false))
+- Execution policy travada por GPO: só -Scope Process ou Unblock-File.
+- Repositório fora do OneDrive (C:\repo) por causa de bin/ e obj/.
+- A chave da conta de storage da v1 vazou (estava nas anotações v1). Nada dela
+  é reaproveitado. Se a v1 continuar viva, rotacionar: 
+  az storage account keys renew --account-name rastreiogpsstdbad1 --resource-group RastreioGPS-Std-RG --key key1
+  e atualizar os app settings da Function App v1 (AzureWebJobsStorage + o setting da connection string).
+
+================================================================================
+  FIM DAS ANOTAÇÕES — v2
+================================================================================
