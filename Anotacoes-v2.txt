@@ -391,6 +391,24 @@ PENDENTE PARA FECHAR A FASE 1:
   - index.html (site do colaborador) + upload no container $web
   - az functionapp cors add (Seção 6 das anotações v1)
   - commit e push do código portado
+  
+
+Fechamento da Fase 1 (2026-09-12):
+  index.html novo (4273 bytes) escrito com o comportamento das Seções 13 e 18
+  da v1: campo de celular, envio a cada 10s, 403 interrompe o rastreio.
+  az storage blob upload ... --container-name '$web' --overwrite → OK
+  DESVIO DELIBERADO DA V1: o CORS libera só a origem do site estático
+  (https://gpsequipebad1.z15.web.core.windows.net), não "*" como na Seção 6 v1.
+  az functionapp cors show → allowedOrigins com a origem única.
+  Site verificado: HTTP 200, 4273 bytes, título correto.
+  git commit 97f84ae "Fase 1: baseline reconstruida..." → push em master.
+  Aceites da Fase 1: TODOS verificados.
+
+
+  
+  
+  
+  
 
 ────────────────────────────────────────────────────────────────────────────────
   SEÇÃO 9 — PRÓXIMOS PASSOS
@@ -404,6 +422,13 @@ Fase 2 — incrementos, na ordem 2 → 3 → 1 → 4:
 Reflexões escritas: por decisão do aluno, todas ficam para o fim do projeto,
 não por fase.
 
+
+
 ================================================================================
   FIM DAS ANOTAÇÕES — v2
 ================================================================================
+
+
+
+
+
