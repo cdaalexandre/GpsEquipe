@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rastreamento de Colaboradores</title>
+<style>
+  body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:20px;background:#f4f6f8;color:#222}
+  .caixa{max-width:420px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.15)}
+  h1{font-size:18px;margin:0 0 4px}
+  h2{font-size:14px;font-weight:normal;color:#666;margin:0 0 20px}
+  label{display:block;font-size:14px;margin-bottom:6px}
+  input{width:100%;padding:10px;font-size:16px;border:1px solid #bbb;border-radius:4px;box-sizing:border-box}
+  button{width:100%;padding:12px;font-size:16px;border:0;border-radius:4px;margin-top:12px;cursor:pointer}
+  #iniciar{background:#0a6b3d;color:#fff}
+  #parar{background:#8b1a1a;color:#fff;display:none}
+  #estado{margin-top:16px;padding:10px;border-radius:4px;font-size:14px;min-height:20px}
+  .ok{background:#e6f4ea;color:#0a6b3d}
+  .erro{background:#fdecea;color:#8b1a1a}
+  .neutro{background:#eef1f4;color:#444}
+  #contador{margin-top:8px;font-size:12px;color:#666}
+</style>
+</head>
+<body>
+<div class="caixa">
+  <h1>Diretoria de Ensino Centro Oeste - SEDUC/SP</h1>
+  <h2>Rastreamento de colaboradores em campo</h2>
+
+  <label for="celular">Seu celular, com DDD</label>
+  <input id="celular" type="tel" placeholder="+5511982253855" autocomplete="tel">
+
+  <button id="iniciar">Iniciar rastreamento</button>
+  <button id="parar">Parar</button>
+
+  <div id="estado" class="neutro">Aguardando inicio.</div>
+  <div id="contador"></div>
+</div>
+
+<script>
+// Endereco da API publicada. Trocar aqui se a Function App mudar de nome.
+var API = "https://gpsequipe-app-bad1.azurewebsites.net/api/recebercoordenadas";
+var INTERVALO_MS = 10000;
+
+var timer = null;
+var enviados = 0;
+var elCelular = document.getElementById("celular");
+var elIniciar = document.getElementById("iniciar");
+var elParar = document.getElementById("parar");
+var elEstado = document.getElementById("estado");
+var elContador = document.getElementById("contador");
+
+function mostrar(texto, classe) {
+  elEstado.textContent = texto;
+  elEstado.className = classe;
+}
+
+function enviarPosicao() {
+  if (!navigator.geolocation) {
+    mostrar("Este navegador nao oferece geolocalizacao.", "erro");
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(function (pos) {
+    var corpo = {
+      Celular: elCelular.value.trim(),
+      Latitude: pos.coords.latitude,
+      Longitude: pos.coords.longitude
+    };
+    fetch(API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(corpo)
+    }).then(function (r) {
+      if (r.status === 403) {
+        mostrar("Celular nao cadastrado. Procure o gestor.", "erro");
+        pararRastreio();
+        return null;
+      }
+      if (!r.ok) {
+        mostrar("Falha no envio. Codigo " + r.status + ". Tentando de novo.", "erro");
+        return null;
+      }
+      return r.text();
+    }).then(function (t) {
+      if (t) {
+        enviados = enviados + 1;
+        mostrar(t, "ok");
+        elContador.textContent = "Envios: " + enviados + " | ultimo as " + new Date().toLocaleTimeString("pt-BR");
+      }
+    }).catch(function () {
+      mostrar("Sem conexao com a API. Tentando de novo.", "erro");
+    });
+  }, function (err) {
+    mostrar("GPS indisponivel: " + err.message, "erro");
+  }, { enableHighAccuracy: true, timeout: 9000, maximumAge: 0 });
+}
+
+function pararRastreio() {
+  if (timer) { clearInterval(timer); timer = null; }
+  elIniciar.style.display = "block";
+  elParar.style.display = "none";
+  elCelular.disabled = false;
+}
+
+elIniciar.addEventListener("click", function () {
+  var numero = elCelular.value.trim();
+  if (numero.replace(/\D/g, "").length < 12) {
+    mostrar("Informe o numero completo, com codigo do pais e DDD.", "erro");
+    return;
+  }
+  elCelular.disabled = true;
+  elIniciar.style.display = "none";
+  elParar.style.display = "block";
+  mostrar("Obtendo primeira posicao...", "neutro");
+  enviarPosicao();
+  timer = setInterval(enviarPosicao, INTERVALO_MS);
+});
+
+elParar.addEventListener("click", function () {
+  pararRastreio();
+  mostrar("Rastreamento interrompido.", "neutro");
+});
+</script>
+</body>
+</html>

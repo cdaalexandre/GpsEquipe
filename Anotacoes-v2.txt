@@ -24,6 +24,10 @@ Guarda de tenant — rodar antes de qualquer az create / delete / publish:
   Só prosseguir se: Azure for Students + tenant 38ae2f02-... + usuario @cs.unicid.edu.br
   Observação: --query com tenantDisplayName veio vazio nesta máquina; use tenantId.
 
+Padrão adotado na prática: a guarda virou um bloco condicional no início de cada
+script, que ABORTA antes de qualquer create/delete/publish se o tenant ou o
+usuário não conferirem. Funcionou em todos os blocos da Fase 1.
+
 Proibido: qualquer script que enumere e apague "todos os resource groups"
 (o azurePurgeAll.ps1 da v1 apagou recursos alheios na assinatura PRODESP).
 
@@ -40,8 +44,13 @@ Convenção: base "gpsequipe" + sufixo bad1 (últimos 4 do subscription id, como
   Pasta local:         C:\repo\GpsEquipe    (fora do OneDrive de propósito)
   Região:              brazilsouth (mesma da v1)
 
-Status: NENHUM recurso Azure criado ainda. Disponibilidade global do nome do
-storage e do function app só se confirma no momento do create.
+Status (2026-09-12): TODOS criados no Azure. Os nomes globais gpsequipebad1 e
+GpsEquipe-App-bad1 estavam livres e foram aceitos no create.
+
+URLs em produção:
+  Site do colaborador:  https://gpsequipebad1.z15.web.core.windows.net/
+  API receber (POST):   https://gpsequipe-app-bad1.azurewebsites.net/api/recebercoordenadas
+  Relatório (GET):      https://gpsequipe-app-bad1.azurewebsites.net/api/verrelatorio
 
 TODOS os nomes da v1 (rastreiogpsstdbad1, RastreioGPS-Std-RG,
 RastreioGPS-App-Std-bad1, tudo com bba7, RastreioGPS-RG) são MORTOS para
@@ -54,7 +63,7 @@ Máquina: notebook PRODESP, Windows 11 Pro, usuário 155688, admin local: True.
 PowerShell: 5.1.26100.8875
 Transcript de PowerShell ATIVO, gravando em:
   C:\Users\155688\OneDrive - PRODESP\PowerShell_Logs\
-  → nunca imprimir segredo no console; usar | Set-Clipboard
+  → nunca imprimir segredo no console; usar | Set-Clipboard ou variável
 
 Comando de inventário usado:
   foreach ($t in 'az','dotnet','func','git','winget','code','python') { $c = Get-Command $t -ErrorAction SilentlyContinue; "{0,-8} {1}" -f $t, $(if ($c) { $c.Source } else { 'AUSENTE' }) }
@@ -73,12 +82,14 @@ Instalações feitas (winget, com admin):
     → Azure CLI 2.90.0 (x64 MSI)  |  verificado: az version --output table
   winget install --id Microsoft.Azure.FunctionsCoreTools --exact --accept-package-agreements --accept-source-agreements
     → Functions Core Tools 4.14.0  |  verificado: func --version → 4.14.0
+  winget install --id Microsoft.DotNet.SDK.10 --exact --accept-package-agreements --accept-source-agreements
+    → .NET SDK 10.0.401  |  verificado em janela NOVA: dotnet --list-sdks
 
 Estado atual:
-  az      2.90.0   OK
-  func    4.14.0   OK
-  git     2.53.0   OK
-  dotnet  EXISTE o executável, mas NENHUM SDK encontrado (ver Seção 6)
+  az      2.90.0    OK
+  func    4.14.0    OK
+  git     2.53.0    OK
+  dotnet  10.0.401  OK (SDK)
 
 ────────────────────────────────────────────────────────────────────────────────
   SEÇÃO 4 — REPOSITÓRIO
@@ -95,48 +106,100 @@ Local:
     origin  https://github.com/cdaalexandre/GpsEquipe.git (fetch)
     origin  https://github.com/cdaalexandre/GpsEquipe.git (push)
 
-Status: sem commit ainda. Primeiro commit só depois de confirmar que o
-.gitignore gerado pelo func init cobre local.settings.json.
+Branch: master (foi o que o git init criou nesta máquina; mantido).
+
+Primeiro commit (2026-09-12):
+  git add .
+  git commit -m "Fase 0: projeto GpsEquipe inicializado em isolated worker (net10.0)"
+    → [master (root-commit) 313c19e] 7 files changed, 484 insertions(+)
+  git push -u origin master
+    → * [new branch]  master -> master
+    → branch 'master' set up to track 'origin/master'
+
+Validação do .gitignore ANTES do commit:
+  git check-ignore -v local.settings.json obj bin
+    .gitignore:5:local.settings.json  →  local.settings.json
+    .gitignore:25:[Oo]bj/             →  obj
+  ([Bb]in/ declarado na linha 24.)
+  Confirmado: local.settings.json e obj/ ficaram FORA do commit.
 
 ────────────────────────────────────────────────────────────────────────────────
-  SEÇÃO 5 — MODELO DE EXECUÇÃO (decisão travada)
+  SEÇÃO 5 — MODELO DE EXECUÇÃO E TARGET FRAMEWORK
 ────────────────────────────────────────────────────────────────────────────────
 A v1 era in-process (Microsoft.NET.Sdk.Functions, func init --dotnet).
 Suporte ao in-process termina em 10/11/2026 (documentação Microsoft).
-A v2 nasce em ISOLATED WORKER:
-  func init . --worker-runtime dotnet-isolated --target-framework <net10.0 ou net8.0>
-  az functionapp create ... --runtime dotnet-isolated --functions-version 4 --runtime-version <ver>
+A v2 nasce em ISOLATED WORKER. Decisão mantida e validada em produção.
 
-Target framework: PREFERIR .NET 10 (LTS). O próprio func init 4.14.0 avisou:
-  ".NET 8 will reach end-of-life on novembro 09 2026 and will no longer be supported."
-.NET 8 só como fallback documentado se o Functions ou o SDK não oferecerem o 10.
-Verificar suporte antes de decidir:
-  az functionapp list-runtimes --os linux -o table
+Comando efetivo do init:
+  func init . --worker-runtime dotnet-isolated --target-framework net10.0
 
-Código v1 (ReceberCoordenadas.cs, VerRelatorio.cs) será PORTADO, não copiado:
-  [FunctionName] → [Function]; host em Program.cs; pacotes Microsoft.Azure.Functions.Worker.*
+TARGET FRAMEWORK — histórico da decisão:
+  1. Decidido net10.0 com base em `az functionapp list-runtimes --os linux`,
+     que lista DOTNET-ISOLATED|10.0 para functions-version 4, sem deprecação
+     nem preview. SDK local 10.0.401 compatível.
+  2. O deploy em net10.0 FALHOU: app em 503 permanente (ver Seção 8).
+  3. REBAIXADO PARA net9.0, que subiu de imediato. É o framework em uso.
+  4. Trabalho futuro: migrar para Flex Consumption, onde o .NET 10 deve estar
+     operante. O Linux Consumption tem EOL anunciado em 30/09/2028 e a CLI
+     recomenda Flex em cada comando.
+
+Pacotes do template isolated (gerados pelo func init 4.14.0):
+  Microsoft.Azure.Functions.Worker 2.52.0
+  Microsoft.Azure.Functions.Worker.Sdk 2.0.7
+  Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore 2.1.0
+  Microsoft.Azure.Functions.Worker.OpenTelemetry 1.2.0
+  OpenTelemetry.Extensions.Hosting 1.15.3
+  Azure.Monitor.OpenTelemetry.Exporter 1.7.0
+  + Azure.Data.Tables 12.12.0 (adicionado com dotnet add package)
+
+CONSEQUÊNCIA IMPORTANTE do package Extensions.Http.AspNetCore: o HTTP trigger
+em isolated usa a integração ASP.NET Core, ou seja:
+  parâmetro  → HttpRequest      (NÃO HttpRequestData)
+  retorno    → IActionResult    (NÃO HttpResponseData)
+  atributo   → [Function]       (NÃO [FunctionName])
+  host       → Program.cs
 
 ────────────────────────────────────────────────────────────────────────────────
-  SEÇÃO 6 — ESTADO ATUAL E PENDÊNCIAS (onde a Fase 0 parou)
+  SEÇÃO 6 — FASE 0: AMBIENTE E NOMES — CONCLUÍDA (2026-09-12)
 ────────────────────────────────────────────────────────────────────────────────
-Tentativa de init (2026-09-12), FALHOU:
+Tentativa de init que FALHOU:
   func init . --worker-runtime dotnet-isolated --target-framework net8.0
   Erro: "No .NET SDKs were found" / "Error creating project template"
-  Causa: func init chama `dotnet new`, que exige o SDK; só o executável dotnet.exe existe.
 
-Observação não explicada: `func new --help | Select-String -Pattern "net\d"` devolveu
-vazio. Reavaliar depois do SDK instalado.
+DIAGNÓSTICO (não era "nunca instalado"):
+  O log bruto da v1 prova que esta máquina tinha o SDK 8.0.121 em out/2025 —
+  todo publish da v1 compilou a partir de C:\Program Files\dotnet\sdk\8.0.121\.
+  Comando de diagnóstico usado:
+    (Get-Command dotnet).Source ; dotnet --list-sdks ; dotnet --list-runtimes ;
+    Get-ChildItem 'C:\Program Files\dotnet\sdk' ; Get-ChildItem Env: | Where-Object { $_.Name -like '*DOTNET*' }
+  Resultado:
+    dotnet no PATH: C:\Program Files\dotnet\dotnet.exe   (OK)
+    --list-sdks: VAZIO
+    --list-runtimes: Microsoft.NETCore.App 8.0.30 e WindowsDesktop.App 8.0.30
+    pasta C:\Program Files\dotnet\sdk: INEXISTENTE
+    variáveis DOTNET_* / MSBuild*: nenhuma
+    global.json no repo: nenhum
+  CAUSA: o SDK foi removido do disco; só o runtime sobreviveu. PATH, variáveis
+  de ambiente e global.json descartados por evidência.
+  (Provável atualização/patch corporativo — não comprovável pelo estado atual.)
 
-PRÓXIMO PASSO (não executado ainda):
-  1. Diagnóstico:  dotnet --info; "---SDKs---"; dotnet --list-sdks; "---Runtimes---"; dotnet --list-runtimes
-  2. Instalar o SDK via winget (id a confirmar: Microsoft.DotNet.SDK.10 ou Microsoft.DotNet.SDK.8)
-  3. Abrir janela NOVA de PowerShell (PATH só carrega na abertura)
-  4. Conferir o que o func init falho deixou:  Get-ChildItem C:\repo\GpsEquipe -Force
-  5. Repetir o func init com o target framework decidido
-  6. Conferir .gitignore → primeiro commit → git push -u origin main (ou master, conforme o git init)
+CORREÇÃO:
+  winget search Microsoft.DotNet.SDK --source winget
+    → Microsoft.DotNet.SDK.10 | 10.0.401  (GA; o único Preview na lista é o 11)
+  winget install --id Microsoft.DotNet.SDK.10 --exact --accept-package-agreements --accept-source-agreements
+    → Successfully installed
+  Em janela NOVA: dotnet --list-sdks → 10.0.401 [C:\Program Files\dotnet\sdk]
 
-Depois disso: Fase 1 = provisionar Azure na ordem das Seções 2 → 3 → 4 → 5 → 6
-das anotações v1, com os nomes da Seção 2 deste arquivo.
+Resíduo do init falho: NENHUM. A pasta só tinha .git e Anotacoes-v2.txt.
+
+func init bem-sucedido gerou:
+  .gitignore, .vscode\, Program.cs, GpsEquipe.csproj, host.json,
+  local.settings.json, Properties\, obj\
+
+ACEITES DA FASE 0 — todos verificados:
+  [x] func init concluído no modelo isolated
+  [x] .gitignore cobrindo local.settings.json (git check-ignore -v)
+  [x] primeiro push no GitHub (commit 313c19e, branch master)
 
 ────────────────────────────────────────────────────────────────────────────────
   SEÇÃO 7 — LIÇÕES DESTA MÁQUINA (para não reaprender)
@@ -151,10 +214,195 @@ das anotações v1, com os nomes da Seção 2 deste arquivo.
   sem BOM: [IO.File]::WriteAllText($caminho, $texto, [Text.UTF8Encoding]::new($false))
 - Execution policy travada por GPO: só -Scope Process ou Unblock-File.
 - Repositório fora do OneDrive (C:\repo) por causa de bin/ e obj/.
-- A chave da conta de storage da v1 vazou (estava nas anotações v1). Nada dela
-  é reaproveitado. Se a v1 continuar viva, rotacionar: 
+- Write-Output sai na hora; objeto formatado (Format-Table) sai no fim do
+  pipeline. Saída fora de ordem é flush, não erro. Usar | Out-String quando a
+  ordem importa.
+- `az functionapp list-runtimes --os linux` devolve ARRAY na raiz, não objeto
+  com chave .linux. Filtrar com @($r) | Where-Object { $_.runtime -eq '...' }.
+- JMESPath é CASE-SENSITIVE. !contains(name,'STORAGE') NÃO pega
+  'AzureWebJobsStorage'. Foi o que causou o incidente da Seção 8.
+- Nunca usar o clipboard para passar valor entre passos: colar o output no chat
+  sobrescreve o clipboard. Valor sensível vai de comando para variável para
+  arquivo, dentro do MESMO bloco.
+- Confirmação de escrita precisa checar $LASTEXITCODE. "Write-Output OK" fixo
+  mente quando o comando anterior falha.
+- A chave de storage da v1 vazou (estava nas anotações v1). Nada dela é
+  reaproveitado. Se a v1 continuar viva, rotacionar:
   az storage account keys renew --account-name rastreiogpsstdbad1 --resource-group RastreioGPS-Std-RG --key key1
-  e atualizar os app settings da Function App v1 (AzureWebJobsStorage + o setting da connection string).
+  e atualizar os app settings da Function App v1.
+
+────────────────────────────────────────────────────────────────────────────────
+  SEÇÃO 8 — FASE 1: BASELINE V1 RECONSTRUÍDA (2026-09-12)
+────────────────────────────────────────────────────────────────────────────────
+Sequência executada, seguindo as Seções 2 a 11 das anotações v1 com nomes novos.
+Todo bloco começou com a guarda de tenant condicional.
+
+  az group create --name GpsEquipe-RG --location brazilsouth
+    → provisioningState Succeeded
+  az storage account create --name gpsequipebad1 --resource-group GpsEquipe-RG --location brazilsouth --sku Standard_LRS
+    → Succeeded | Standard_LRS | web: https://gpsequipebad1.z15.web.core.windows.net/
+  az storage table create --name Coordenadas --account-name gpsequipebad1
+  az storage table create --name FuncionariosPermitidos --account-name gpsequipebad1
+    → { "created": true } nas duas
+  az storage blob service-properties update --account-name gpsequipebad1 --static-website --index-document index.html
+    → staticWebsite.enabled true
+  az functionapp create --name GpsEquipe-App-bad1 --resource-group GpsEquipe-RG --storage-account gpsequipebad1 --consumption-plan-location brazilsouth --runtime dotnet-isolated --runtime-version 10 --functions-version 4 --os-type Linux
+    → state Running | sku Dynamic | host gpsequipe-app-bad1.azurewebsites.net
+    → Application Insights GpsEquipe-App-bad1 criado automaticamente
+
+Runtime confirmado após o create:
+  az functionapp config show ... --query linuxFxVersion → DOTNET-ISOLATED|10.0
+  FUNCTIONS_WORKER_RUNTIME = dotnet-isolated | FUNCTIONS_EXTENSION_VERSION = ~4
+
+App setting da connection string (nome escolhido neste projeto):
+  TabelaConnectionString
+  Gravado com: az functionapp config appsettings set ... --settings "TabelaConnectionString=$cs" -o none
+
+CUSTO: Standard_LRS e Consumption Y1/Dynamic, ambos gratuitos na v1 (Seção 19 v1).
+Nenhum recurso fora do gratuito do Azure for Students.
+
+--- INCIDENTE DE SEGREDO ---
+Um `az functionapp config appsettings list` com filtro JMESPath imprimiu a
+AccountKey de gpsequipebad1 em texto puro no console.
+  Causa: JMESPath é case-sensitive; !contains(name,'STORAGE') não casa com
+  'AzureWebJobsStorage'.
+  Alcance: console + transcript do PowerShell + histórico da conversa.
+  Resolução (executada, com pré-visualização antes):
+    az storage account keys renew ... --key key1
+    az storage account keys renew ... --key key2
+    reescrita de AzureWebJobsStorage, WEBSITE_CONTENTAZUREFILECONNECTIONSTRING
+      e TabelaConnectionString com a string nova
+    local.settings.json regravado sem BOM
+    func azure functionapp publish (regenera o SAS do WEBSITE_RUN_FROM_PACKAGE)
+  Comprovação da revogação:
+    az storage table list --account-name gpsequipebad1 --account-key <chave antiga>
+    → "Authentication failure. This may be caused by either invalid account key..."
+  Verificação de resíduo: nenhum app setting e nenhum arquivo local contém a
+  chave antiga.
+  PENDENTE (manual): apagar os transcripts contaminados —
+    PS_2026-09-12_12-58-59_PID17364.txt
+    PS_2026-09-12_14-14-26_PID33188.txt
+    PS_2026-09-12_14-20-58_PID25764.txt
+  em C:\Users\155688\OneDrive - PRODESP\PowerShell_Logs\
+  (o OneDrive pode retê-los no histórico de versões; a rotação da chave é o que
+  de fato neutralizou o vazamento).
+
+--- O 503 QUE TRAVOU A FASE 1 ---
+Sintomas após `func azure functionapp publish` bem-sucedido:
+  "Error calling sync triggers (BadRequest)" repetido
+  503 em todas as rotas
+  `az functionapp function list` → "Operation returned an invalid status 'Bad Request'"
+  Application Insights com ZERO registros em traces, exceptions e requests
+
+Hipóteses testadas e DESCARTADAS com evidência:
+  1. linuxFxVersion errado → DOTNET-ISOLATED|10.0 é exatamente o que o catálogo
+     `az functionapp list-runtimes --os linux` registra. A reclamação
+     "Invalid version: 10.0" que apareceu no `appsettings set` é bug de
+     validação da CLI, não config errada.
+  2. Pacote ausente/inacessível → os zips estavam em $web/function-releases,
+     2,8 MB cada.
+  3. Chave de storage inválida → rotacionada, settings reescritos, 503 manteve.
+  4. Exceção no código → telemetria zero; exceção em Run apareceria em
+     `exceptions`. O build tinha 0 erros e 0 avisos.
+  5. WEBSITE_USE_PLACEHOLDER_DOTNETISOLATED → posto em 0 + restart: 503 manteve.
+
+CAUSA RAIZ CONFIRMADA:
+  .NET 10 é ANUNCIADO no catálogo do Linux Consumption (DOTNET-ISOLATED|10.0)
+  mas NÃO está operante nesse plano. O worker nunca inicializa, e por isso não
+  há telemetria nenhuma.
+  Prova: trocando SOMENTE o TargetFramework de net10.0 para net9.0 — mesmo
+  código, mesmo app, mesmo plano, mesma chave — o publish sincronizou os
+  triggers e o host respondeu HTTP 200.
+
+Procedimento do rebaixamento:
+  1. TargetFramework para net9.0 no GpsEquipe.csproj
+  2. Remove-Item .\obj, .\bin -Recurse -Force   (obrigatório ao trocar framework)
+  3. dotnet build  → êxito
+  4. func azure functionapp publish GpsEquipe-App-bad1
+     → "Detected target framework: net9.0"
+     → "Updating 'linuxFxVersion' to 'DOTNET-ISOLATED|9.0'."
+     → Syncing triggers... com as duas Invoke urls listadas
+
+DECISÃO: a v2 fica em net9.0. Migrar para Flex Consumption (onde o .NET 10 deve
+estar operante) é trabalho futuro documentado. Observar que o .NET 9 é STS, não
+LTS — o mesmo tipo de problema de fim de suporte que motivou a saída do
+in-process reaparece aqui, agora na camada de hospedagem.
+
+Lições de ferramenta descobertas neste diagnóstico:
+  - `az functionapp config set --linux-fx-version` falhou com exit code 255 sem
+    alterar o valor. Quem atualizou o linuxFxVersion foi o `func publish`, que
+    lê o TargetFramework do .csproj.
+  - `func azure functionapp logstream` NÃO existe em Linux Consumption:
+    "Log stream is not currently supported in Linux Consumption and Flex Apps."
+  - `az monitor app-insights query --app` espera o NOME do componente quando
+    usado com --resource-group, não o appId (GUID).
+  - Trocar de target framework exige apagar obj/ e bin/ antes do build.
+
+--- ESQUEMA DAS TABELAS ---
+Os arquivos .cs da v1 não estavam disponíveis; só o comportamento externo
+(Seções 11, 13, 14 e 17 da v1). O esquema de Coordenadas foi DEFINIDO agora,
+não portado.
+
+  Coordenadas
+    PartitionKey = yyyy-MM-dd  (data UTC do envio)
+    RowKey       = GUID (Guid.NewGuid().ToString("N"))
+    Propriedades comuns: Celular, Latitude, Longitude, DataHoraUtc
+    Razão da partição por data: o Incremento 3 (filtro por período) passa a ser
+    consulta por partição, não varredura da tabela.
+    Razão de Celular NÃO ser chave: PartitionKey e RowKey são imutáveis. Com o
+    celular como propriedade comum, o Incremento 4 (LGPD) é um update simples.
+    ISSO CANCELA o alerta do roteiro que previa copiar-e-apagar no Incremento 4.
+
+  FuncionariosPermitidos — esquema da v1 preservado (Seção 11 v1)
+    PartitionKey = "FUNCIONARIO"
+    RowKey       = celular só com dígitos, sem o "+"
+  Cadastro:
+    az storage entity insert --account-name gpsequipebad1 --table-name FuncionariosPermitidos --entity PartitionKey="FUNCIONARIO" RowKey="5511982253855"
+  Cadastrados: 5511982253855
+
+--- CÓDIGO PORTADO ---
+Arquivos no projeto:
+  Program.cs            → host do worker (gerado pelo func init, não alterado)
+  Entidades.cs          → CoordenadaEntidade e FuncionarioPermitidoEntidade (ITableEntity)
+  ReceberCoordenadas.cs → POST, valida o celular e grava a coordenada
+  VerRelatorio.cs       → GET, devolve HTML agrupado por colaborador
+
+Diferenças em relação à v1:
+  [FunctionName] → [Function]
+  HttpRequest + IActionResult (integração ASP.NET Core)
+  ILogger injetado por construtor
+  GetEntityIfExistsAsync + .HasValue em vez de GetEntityAsync
+    → é o que evita o erro CS0266 (NullableResponse) que travou a v1
+  ContentResult com ContentType text/html no relatório
+    (OkObjectResult devolveria o HTML como texto puro)
+  CultureInfo.InvariantCulture nas coordenadas
+    → evita vírgula decimal, que quebraria a URL do Google Maps
+  Textos já com as correções da Seção 17 da v1:
+    "Diretoria de Ensino Centro Oeste - SEDUC/SP" e "Colaborador"
+
+--- ACEITES DA FASE 1 (smoke test, Seção 14 da v1 adaptada) ---
+  [x] POST celular cadastrado → "Coordenada recebida com sucesso."
+  [x] POST celular não cadastrado → 403
+  [x] GET relatório → HTTP 200, Content-Type text/html, 2 registros,
+      celular presente, link de mapa presente
+  [x] Tabela Coordenadas com as duas linhas, particionadas em 2026-09-12
+
+PENDENTE PARA FECHAR A FASE 1:
+  - index.html (site do colaborador) + upload no container $web
+  - az functionapp cors add (Seção 6 das anotações v1)
+  - commit e push do código portado
+
+────────────────────────────────────────────────────────────────────────────────
+  SEÇÃO 9 — PRÓXIMOS PASSOS
+────────────────────────────────────────────────────────────────────────────────
+Fase 2 — incrementos, na ordem 2 → 3 → 1 → 4:
+  2. USABILIDADE — mapa Leaflet.js, custo zero
+  3. HISTÓRICO — filtro data início / data fim (usa a PartitionKey por data)
+  1. SEGURANÇA — API Key só em VerRelatorio (AuthorizationLevel.Function)
+  4. LGPD — anonimização após 90 dias por Timer trigger (update simples)
+
+Reflexões escritas: por decisão do aluno, todas ficam para o fim do projeto,
+não por fase.
 
 ================================================================================
   FIM DAS ANOTAÇÕES — v2
