@@ -25,7 +25,7 @@ public class VerRelatorio
 
     [Function("VerRelatorio")]
     public async Task<IActionResult> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get")] HttpRequest req)
+        [HttpTrigger(AuthorizationLevel.Function, "get")] HttpRequest req)
     {
         var conexao = Environment.GetEnvironmentVariable("TabelaConnectionString");
         if (string.IsNullOrWhiteSpace(conexao))

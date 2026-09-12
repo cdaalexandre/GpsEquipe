@@ -438,6 +438,31 @@ INCREMENTO 3 — HISTÓRICO (filtro por data), 2026-09-12:
   Observacao: o meta refresh de 30s foi REMOVIDO nesta versao — recarregar
   sozinho apagaria o filtro que o gestor acabou de escolher.  
 
+
+INCREMENTO 1 — SEGURANÇA (API Key), 2026-09-12:
+  VerRelatorio.cs: AuthorizationLevel.Anonymous → AuthorizationLevel.Function.
+  ReceberCoordenadas MANTIDO Anonymous: e chamado pelo index.html publico, e
+  sua protecao e a lista FuncionariosPermitidos (retorna 403).
+  A chave e gerada e guardada pelo proprio host do Functions; nao existe no
+  codigo, no repo nem no index.html — o aceite sai por construcao.
+  Chave lida com: az functionapp function keys list --function-name VerRelatorio
+    --query default  (56 caracteres; e chave DE FUNCAO, nao de host)
+  Envio: header x-functions-key ou query string ?code=
+  Aceites verificados:
+    sem chave           → 401
+    com chave no header → 200, relatorio completo
+    ReceberCoordenadas  → continua respondendo "Coordenada recebida com sucesso."
+    busca da chave literal em todo arquivo versionavel do repo → nenhum resultado
+  CONCEITO PARA O RELATORIO — API Key x token OAuth:
+    API Key e segredo compartilhado, nao identifica o portador, vale ate ser
+    trocada. Token OAuth e emitido para uma identidade, tem escopo e validade
+    curta. Se a API Key vazar, a unica correcao e regenerar e redistribuir —
+    foi o que aconteceu com a account key nesta mesma sessao.
+  IMPACTO OPERACIONAL: o gestor agora precisa da URL com ?code= para abrir o
+  relatorio. O meta refresh nao existe mais (removido no Incremento 3), entao
+  nao ha risco de perder a chave num reload automatico.
+
+
 ────────────────────────────────────────────────────────────────────────────────
   SEÇÃO 9 — PRÓXIMOS PASSOS
 ────────────────────────────────────────────────────────────────────────────────
