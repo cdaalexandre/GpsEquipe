@@ -507,25 +507,109 @@ TRABALHO FUTURO:
   - Cadastrar os demais colaboradores em FuncionariosPermitidos.
   - Considerar rotação periódica da chave de função do VerRelatorio.
  
+
+────────────────────────────────────────────────────────────────────────────────
+  SEÇÃO 12 — INCREMENTO 5: IDENTIFICAÇÃO POR PIN (2026-09-13)
+────────────────────────────────────────────────────────────────────────────────
+Numeração: entra como Seção 12 porque as Seções 10 (Arquitetura final) e 11
+(Pendências) já existiam. ATUALIZA a Seção 10: a Function App passou a ter uma
+quarta função, DefinirPin (POST, AuthorizationLevel.Function), e a tabela
+FuncionariosPermitidos ganhou as propriedades PinSalt, PinHash e PinDefinidoEm.
+
+Motivo: fechar a limitação da Seção 6 das Reflexões — a lista
+FuncionariosPermitidos autorizava um número, mas não verificava se quem o
+informou era o dono dele.
+
+Mecanismo: PBKDF2-SHA256, 100.000 iterações, salt de 16 bytes por pessoa, hash
+de 32 bytes. O PIN nunca é gravado. Comparação com
+CryptographicOperations.FixedTimeEquals (tempo fixo, não vaza por timing).
+
+Arquivos:
+  SegurancaPin.cs          NOVO — GerarSalt, CalcularHash, Conferir
+  DefinirPin.cs            NOVO — função administrativa, authLevel Function
+  Entidades.cs             FuncionarioPermitidoEntidade + PinSalt, PinHash,
+                           PinDefinidoEm (DateTimeOffset? porque o cadastro
+                           anterior ao incremento não tem essa data)
+  ReceberCoordenadas.cs    exige Pin no JSON antes de gravar
+  index.html               campo type=password + aviso de tratamento LGPD
+                           em <details> recolhido
+
+DECISÃO 1 — FALHA FECHADA: cadastro sem PIN definido NÃO envia. Aceitar por
+compatibilidade criaria porta lateral para burlar a identificação inteira.
+Consequência operacional: todo colaborador precisa de PIN antes do primeiro uso.
+
+DECISÃO 2 — MENSAGEM ÚNICA: as quatro falhas devolvem 403 com o mesmo texto,
+"Identificacao invalida.". Mensagens distintas transformariam o endpoint anônimo
+em oráculo de quem é colaborador da DECO — bastaria varrer números. O motivo
+real de cada falha vai para o ILogger, que só o administrador lê.
+Efeito colateral: o index.html passou a exibir o texto que o servidor devolve,
+em vez de texto fixo no cliente, para a mensagem nunca sair de sincronia.
+
+Comandos efetivos:
+  func azure functionapp publish GpsEquipe-App-bad1
+    → Detected target framework: net9.0 | 4 functions | exit 0
+  POST https://gpsequipe-app-bad1.azurewebsites.net/api/definirpin?code=<CHAVE>
+    corpo {Celular, Pin} → 200 "PIN definido com sucesso."
+  az storage blob upload --account-name gpsequipebad1 --container-name '$web'
+    --name index.html --file C:\repo\GpsEquipe\index.html
+    --content-type 'text/html; charset=utf-8' --overwrite --auth-mode key
+    → exit 0 | site em produção: 6660 bytes, text/html; charset=utf-8
+
+ACEITE (smoke test 2026-09-13, 4 de 4):
+  [x] PIN correto              → 200 "Coordenada recebida com sucesso."
+  [x] PIN errado               → 403 "Identificacao invalida."
+  [x] Sem PIN                  → 403 texto idêntico
+  [x] Celular não cadastrado   → 403 texto idêntico
+  [x] PinSalt e PinHash gravados em 2026-09-13T18:30:04Z
+  [x] Aviso de tratamento no ar: campo de PIN, finalidade, base legal, retenção
+
+REGRAS DE FORMATO DO PIN (validadas no servidor, em DefinirPin):
+  exatamente 6 dígitos; recusa PIN com todos os dígitos iguais; celular precisa
+  existir em FuncionariosPermitidos (senão 404, não 403 — é função de admin).
+
+TRABALHO FUTURO DECLARADO (não escondido):
+  - PBKDF2 roda a cada envio, ou seja a cada 10s por colaborador (~50-100ms de
+    CPU por coordenada). O correto é conferir o PIN uma vez e emitir token de
+    sessão curto. Arquiteturalmente errado, funcionalmente irrelevante no
+    Consumption.
+  - Sem bloqueio por tentativas erradas: 6 dígitos = 1 milhão de combinações e o
+    endpoint é anônimo. O PBKDF2 encarece a tentativa, não a impede.
+  - PIN é fator único e fraco: elevou o sistema de "sem autenticação nenhuma"
+    para "autenticação fraca", não para "forte".
+  - Quilometragem e custo em R$ (cogitado como Incremento 5) movido para
+    trabalho futuro: o dado de quilometragem da DECO não está disponível neste
+    semestre.
+
+LIÇÕES DESTA MÁQUINA (complementam a Seção 7):
+  - Read-Host -AsSecureString dentro de bloco & { } colado no console NÃO
+    captura entrada no PS 5.1: devolve string vazia, e o erro aparece só do
+    lado do servidor como 400. Gerar o valor, não digitar.
+  - RandomNumberGenerator.GetInt32 é .NET Core 3.0+. O PS 5.1 roda sobre .NET
+    Framework 4.x: usar RNGCryptoServiceProvider.GetBytes. Mesmo padrão do 503:
+    API que existe no .NET moderno e não existe no host que executa.
+  - Laço do/until sem teto de tentativas realimenta o erro dezenas de vezes.
+  - Ler corpo de erro HTTP no PS 5.1 exige StreamReader sobre
+    $_.Exception.Response.GetResponseStream(). $_.ErrorDetails.Message vem vazio.
+  - func publish com 2>&1 gera NativeCommandError falso: o func escreve
+    progresso em stderr. Não usar 2>&1 com func.
+  - Conta sem papel RBAC de dados no Storage (Storage Table Data Reader ausente):
+    usar --auth-mode key, não --auth-mode login.
+  - Teste que dependa do clipboard é incompatível com colar output no chat: o
+    próprio ato de copiar o output destrói o valor guardado.
+  - Bloco muito longo colado neste console pode corromper linha (duplicação e
+    quebra observadas). Para texto grande, gravar arquivo e mover, não colar.
+
+PENDÊNCIAS ABERTAS ACRESCENTADAS À SEÇÃO 11:
+  - ModoDeUso-GpsEquipe.md desatualizado: a mensagem "Celular nao cadastrado.
+    Procure o gestor." não existe mais; falta documentar o PIN na seção do
+    colaborador e a função DefinirPin na seção do administrador.
+  - Artigos da LGPD citados no aviso do site não verificados no Vade Mecum.
+  - App setting WEBSITE_USE_PLACEHOLDER_DOTNETISOLATED residual do diagnóstico
+    do 503; não atrapalha, mas é resíduo.
+  - Trilha de extensão DreamShaper em 2/20 etapas (CAPA e EQUIPE concluídas).
+    Problema de partida reescrito: comprovação de atendimento técnico às escolas
+    da DECO, NÃO custo de frota por quilometragem.
+
 ================================================================================
   FIM DAS ANOTAÇÕES — v2 (projeto completo)
 ================================================================================
- 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
