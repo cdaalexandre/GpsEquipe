@@ -14,15 +14,21 @@ public class ReceberCoordenadas
 {
     private readonly ILogger<ReceberCoordenadas> _logger;
 
+    // Incremento 5: resposta unica para toda falha de identificacao.
+    // Mensagens distintas transformariam o endpoint em oraculo de quem e
+    // colaborador. O motivo real fica no log, nao na resposta HTTP.
+    private const string FalhaIdentificacao = "Identificacao invalida.";
+
     public ReceberCoordenadas(ILogger<ReceberCoordenadas> logger)
     {
         _logger = logger;
     }
 
-    // Formato do JSON enviado pelo index.html, identico ao da v1.
+    // Formato do JSON enviado pelo index.html. Incremento 5 acrescentou o Pin.
     public class CoordenadaRecebida
     {
         public string? Celular { get; set; }
+        public string? Pin { get; set; }
         public double Latitude { get; set; }
         public double Longitude { get; set; }
     }
@@ -55,6 +61,14 @@ public class ReceberCoordenadas
             return new BadRequestObjectResult("Campo Celular e obrigatorio.");
         }
 
+        // Incremento 5: PIN ausente ja falha como identificacao, nao como
+        // erro de formato - para nao distinguir "faltou PIN" de "PIN errado".
+        if (string.IsNullOrWhiteSpace(dados.Pin))
+        {
+            _logger.LogWarning("Envio sem PIN.");
+            return new ObjectResult(FalhaIdentificacao) { StatusCode = 403 };
+        }
+
         // Normaliza para o formato da RowKey da v1: somente digitos, sem o "+".
         var celular = new string(dados.Celular.Where(char.IsDigit).ToArray());
 
@@ -65,7 +79,22 @@ public class ReceberCoordenadas
         if (!consulta.HasValue)
         {
             _logger.LogWarning("Celular nao cadastrado: {celular}", celular);
-            return new StatusCodeResult(403);
+            return new ObjectResult(FalhaIdentificacao) { StatusCode = 403 };
+        }
+
+        var funcionario = consulta.Value!;
+
+        // Falha fechada: cadastro sem PIN definido NAO envia.
+        if (string.IsNullOrWhiteSpace(funcionario.PinSalt) || string.IsNullOrWhiteSpace(funcionario.PinHash))
+        {
+            _logger.LogWarning("Celular {celular} cadastrado sem PIN definido.", celular);
+            return new ObjectResult(FalhaIdentificacao) { StatusCode = 403 };
+        }
+
+        if (!SegurancaPin.Conferir(dados.Pin.Trim(), funcionario.PinSalt, funcionario.PinHash))
+        {
+            _logger.LogWarning("PIN incorreto para {celular}.", celular);
+            return new ObjectResult(FalhaIdentificacao) { StatusCode = 403 };
         }
 
         var agora = DateTimeOffset.UtcNow;

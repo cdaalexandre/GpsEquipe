@@ -11,6 +11,7 @@
   h2{font-size:14px;font-weight:normal;color:#666;margin:0 0 20px}
   label{display:block;font-size:14px;margin-bottom:6px}
   input{width:100%;padding:10px;font-size:16px;border:1px solid #bbb;border-radius:4px;box-sizing:border-box}
+  .campo{margin-bottom:12px}
   button{width:100%;padding:12px;font-size:16px;border:0;border-radius:4px;margin-top:12px;cursor:pointer}
   #iniciar{background:#0a6b3d;color:#fff}
   #parar{background:#8b1a1a;color:#fff;display:none}
@@ -19,6 +20,9 @@
   .erro{background:#fdecea;color:#8b1a1a}
   .neutro{background:#eef1f4;color:#444}
   #contador{margin-top:8px;font-size:12px;color:#666}
+  .aviso{margin-top:20px;border-top:1px solid #e2e6ea;padding-top:12px;font-size:12px;color:#555;line-height:1.5}
+  .aviso summary{cursor:pointer;font-weight:bold;color:#0a3d6b}
+  .aviso ul{padding-left:18px;margin:8px 0 0}
 </style>
 </head>
 <body>
@@ -26,14 +30,45 @@
   <h1>Diretoria de Ensino Centro Oeste - SEDUC/SP</h1>
   <h2>Rastreamento de colaboradores em campo</h2>
 
-  <label for="celular">Seu celular, com DDD</label>
-  <input id="celular" type="tel" placeholder="+5511982253855" autocomplete="tel">
+  <div class="campo">
+    <label for="celular">Seu celular, com DDD</label>
+    <input id="celular" type="tel" placeholder="+5511982253855" autocomplete="tel">
+  </div>
+
+  <div class="campo">
+    <label for="pin">Seu PIN de 6 digitos</label>
+    <input id="pin" type="password" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="000000">
+  </div>
 
   <button id="iniciar">Iniciar rastreamento</button>
   <button id="parar">Parar</button>
 
   <div id="estado" class="neutro">Aguardando inicio.</div>
   <div id="contador"></div>
+
+  <!-- Incremento 5: dever de informacao ao titular (LGPD, Lei 13.709/2018). -->
+  <details class="aviso">
+    <summary>Como seus dados sao tratados</summary>
+    <ul>
+      <li><b>O que e coletado:</b> seu numero de celular, a latitude e a longitude
+          do aparelho e a data e hora de cada envio.</li>
+      <li><b>Finalidade:</b> comprovar o atendimento tecnico realizado nas unidades
+          escolares da Diretoria de Ensino Centro Oeste e apoiar o planejamento
+          da distribuicao da equipe em campo.</li>
+      <li><b>Base legal:</b> tratamento necessario a execucao de politica publica
+          pela administracao publica.</li>
+      <li><b>Quando e coletado:</b> somente enquanto esta pagina estiver aberta e
+          o rastreamento estiver iniciado por voce. Ao tocar em Parar, a coleta
+          cessa imediatamente.</li>
+      <li><b>Quem acessa:</b> a gestao da Diretoria, por relatorio protegido por
+          chave de acesso.</li>
+      <li><b>Retencao:</b> apos 90 dias o vinculo entre as coordenadas e o seu
+          numero e apagado de forma irreversivel. Local e horario permanecem sem
+          identificacao.</li>
+      <li><b>Seu PIN:</b> nao e armazenado. O sistema guarda apenas um valor
+          derivado dele, do qual nao se recupera o PIN original.</li>
+    </ul>
+  </details>
 </div>
 
 <script>
@@ -43,7 +78,11 @@ var INTERVALO_MS = 10000;
 
 var timer = null;
 var enviados = 0;
+// Incremento 5: o PIN fica em memoria durante a sessao e sai da tela.
+// Nao vai para localStorage nem para a URL.
+var pinSessao = "";
 var elCelular = document.getElementById("celular");
+var elPin = document.getElementById("pin");
 var elIniciar = document.getElementById("iniciar");
 var elParar = document.getElementById("parar");
 var elEstado = document.getElementById("estado");
@@ -62,6 +101,7 @@ function enviarPosicao() {
   navigator.geolocation.getCurrentPosition(function (pos) {
     var corpo = {
       Celular: elCelular.value.trim(),
+      Pin: pinSessao,
       Latitude: pos.coords.latitude,
       Longitude: pos.coords.longitude
     };
@@ -70,8 +110,11 @@ function enviarPosicao() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(corpo)
     }).then(function (r) {
+      // Incremento 5: a mensagem do 403 vem do servidor, nao e fixa aqui.
       if (r.status === 403) {
-        mostrar("Celular nao cadastrado. Procure o gestor.", "erro");
+        r.text().then(function (msg) {
+          mostrar((msg || "Identificacao invalida.") + " Procure o gestor.", "erro");
+        });
         pararRastreio();
         return null;
       }
@@ -96,9 +139,11 @@ function enviarPosicao() {
 
 function pararRastreio() {
   if (timer) { clearInterval(timer); timer = null; }
+  pinSessao = "";
   elIniciar.style.display = "block";
   elParar.style.display = "none";
   elCelular.disabled = false;
+  elPin.disabled = false;
 }
 
 elIniciar.addEventListener("click", function () {
@@ -107,7 +152,15 @@ elIniciar.addEventListener("click", function () {
     mostrar("Informe o numero completo, com codigo do pais e DDD.", "erro");
     return;
   }
+  var pin = elPin.value.trim();
+  if (!/^[0-9]{6}$/.test(pin)) {
+    mostrar("Informe o PIN de 6 digitos.", "erro");
+    return;
+  }
+  pinSessao = pin;
+  elPin.value = "";
   elCelular.disabled = true;
+  elPin.disabled = true;
   elIniciar.style.display = "none";
   elParar.style.display = "block";
   mostrar("Obtendo primeira posicao...", "neutro");
