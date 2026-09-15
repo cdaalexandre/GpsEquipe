@@ -13,7 +13,9 @@
 
     O que faz com -Executar:
       1  apaga a semente da cena LGPD (exclusao nomeada)
-      2  rotaciona a chave default de VerRelatorio (a Azure gera o valor novo;
+      2  rotaciona TRES chaves: funcao VerRelatorio, funcao VerStatus e a chave
+         de host (functionKeys). A masterKey nao entra, porque nunca e exibida.
+         (a Azure gera o valor novo;
          o valor vem mascarado no resultado, logo nada sensivel vai ao console)
       3  prova que a URL antiga morreu: espera HTTP 401
       4  apaga C:\demo-gpsequipe (PIN e URL com chave)
@@ -49,6 +51,7 @@ $PART_LGPD = '2026-01-01'
 $ROW_LGPD  = 'demolgpd01'
 $PASTA     = 'C:\demo-gpsequipe'
 $ARQ_SEG   = Join-Path $PASTA 'segredos-demo.txt'
+$ARQ_HOST  = Join-Path $PASTA 'chave-admin-host.txt'
 $RESIDUO   = 'WEBSITE_USE_PLACEHOLDER_DOTNETISOLATED'
 
 function Escrever($t) { Write-Host $t }
@@ -91,6 +94,8 @@ if (-not (Test-Guarda)) { return }
 
 # URL antiga, lida do arquivo ANTES de qualquer exclusao. Valor nunca impresso.
 $urlAntiga = $null
+$chaveHostAntiga = $null
+if (Test-Path $ARQ_HOST) { $chaveHostAntiga = (Get-Content $ARQ_HOST -Raw).Trim() }
 if (Test-Path $ARQ_SEG) {
     $linha = Get-Content $ARQ_SEG | Where-Object { $_ -like 'https://*verrelatorio?code=*' } | Select-Object -First 1
     if ($linha) { $urlAntiga = $linha.Trim() }
@@ -106,7 +111,12 @@ Escrever ('semente LGPD na particao ' + $PART_LGPD + ': ' + @($seed).Count + ' l
 if (@($seed).Count -gt 0) { Tabela (@($seed) | Select-Object PartitionKey, RowKey, Celular) }
 if ($ManterSeedLgpd) { Escrever '  -> sera MANTIDA por -ManterSeedLgpd' }
 
-Escrever ('chave a rotacionar: default de VerRelatorio em ' + $APP)
+Escrever ('chaves a rotacionar em ' + $APP + ':')
+Escrever '  - funcao VerRelatorio (default)  : aparece na barra de enderecos do video'
+Escrever '  - funcao VerStatus (default)     : foi gravada em disco antes da troca pela de host'
+Escrever '  - chave de HOST (functionKeys)   : abre o painel e fica em arquivo local na gravacao'
+Escrever '  masterKey NAO entra: nunca foi exibida, e rotacionar quebraria o disparo do Timer.'
+Escrever ('chave de host antiga localizada no arquivo local: ' + $(if ($chaveHostAntiga) { 'sim' } else { 'nao (a prova do 401 dela sera pulada)' }))
 Escrever ('URL antiga localizada no arquivo local: ' + $(if ($urlAntiga) { 'sim' } else { 'nao (a prova do 401 sera pulada)' }))
 
 if (Test-Path $PASTA) {
@@ -152,6 +162,16 @@ Escrever '--- 3. ROTACAO DA CHAVE DE VerRelatorio ---'
 az functionapp function keys set --name $APP --resource-group $RG `
     --function-name VerRelatorio --key-name default -o none 2>$null
 $codRot = $LASTEXITCODE
+Escrever ('rotacao funcao VerRelatorio exit: ' + $codRot)
+# Incremento 6: as chaves do painel administrativo tambem sao expostas na
+# gravacao, entao entram aqui. As falhas sao somadas em $codRot, que a mensagem
+# logo abaixo ja usa para avisar.
+az functionapp function keys set --name $APP --resource-group $RG --function-name VerStatus --key-name default -o none 2>$null
+Escrever ('rotacao funcao VerStatus exit   : ' + $LASTEXITCODE)
+$codRot = $codRot + $LASTEXITCODE
+az functionapp keys set --name $APP --resource-group $RG --key-type functionKeys --key-name default -o none 2>$null
+Escrever ('rotacao chave de HOST exit      : ' + $LASTEXITCODE)
+$codRot = $codRot + $LASTEXITCODE
 Escrever ('exit code da rotacao: ' + $codRot)
 if ($codRot -ne 0) {
     Escrever 'FALHA na rotacao. Confira a sintaxe da sua versao da CLI:'
@@ -177,7 +197,7 @@ if (-not $urlAntiga) {
     if ($st -eq 401) {
         Escrever 'REVOGADA: a URL que aparece no video nao abre mais.'
     } else {
-        Escrever 'ATENCAO: a URL antiga ainda responde ' + $st + '. Repita o teste em alguns minutos.'
+        Escrever ('ATENCAO: a URL antiga ainda responde ' + $st + '. Repita o teste em alguns minutos.')
     }
 }
 
@@ -192,6 +212,22 @@ if (Test-Path $PASTA) {
 }
 Set-Clipboard -Value ' '
 Escrever 'clipboard limpo.'
+
+# --- prova extra: a chave de HOST antiga tambem morreu? ---
+if ($chaveHostAntiga) {
+    Escrever ''
+    Escrever '--- 5b. A CHAVE DE HOST ANTIGA FOI REVOGADA? ---'
+    $sh = 0
+    for ($j = 1; $j -le 3; $j++) {
+        Start-Sleep -Seconds 10
+        $sh = Get-Status ($API + '/verstatus?code=' + $chaveHostAntiga)
+        Escrever ('tentativa ' + $j + ': HTTP ' + $sh + ' (espera 401)')
+        if ($sh -eq 401) { break }
+    }
+    if ($sh -eq 401) { Escrever 'REVOGADA: a chave de host do video nao abre mais o painel.' }
+    else { Escrever ('ATENCAO: a chave de host antiga ainda responde ' + $sh + '. Repita em alguns minutos.') }
+    $chaveHostAntiga = $null
+}
 
 # ------------------------------------------------- 6. residuo de app setting
 if ($RemoverAppSettingResidual) {
@@ -230,3 +266,4 @@ Escrever '  [ ] o audio pegou as cenas 4, 7 e 8'
 Escrever ''
 Escrever 'Para gravar de novo: rode Demo-1 e Demo-2 outra vez. O Demo-2 gera PIN e URL novos.'
 Escrever 'Para entregar a chave ao gestor depois: consulte o ModoDeUso-GpsEquipe.md.'
+Escrever 'Para voltar a usar o painel: rode o Demo-2-Preparar.ps1, que le as chaves novas.'
