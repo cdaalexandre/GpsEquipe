@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>GpsEquipe - Painel administrativo</title>
+<style>
+  :root { --fg:#1c1f23; --bg:#f4f5f7; --card:#fff; --linha:#e2e5ea; --fraco:#6b7280;
+          --ok:#116b3a; --aviso:#8a5a00; --erro:#a11b1b; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:Segoe UI,system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+  header { background:#1c2b3a; color:#fff; padding:16px 20px; }
+  header h1 { margin:0; font-size:18px; }
+  header p { margin:4px 0 0; font-size:13px; opacity:.8; }
+  main { max-width:1040px; margin:0 auto; padding:20px; }
+  .acesso { background:var(--card); border:1px solid var(--linha); border-radius:8px; padding:16px; margin-bottom:18px; }
+  .acesso label { display:block; font-size:13px; font-weight:600; margin-bottom:6px; }
+  .linha { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  input[type=password] { flex:1 1 320px; padding:10px; border:1px solid #c3c9d2; border-radius:6px; font-size:15px; }
+  button { padding:10px 18px; border:0; border-radius:6px; background:#1c2b3a; color:#fff; font-size:15px; cursor:pointer; }
+  button.secundario { background:#5b6a7a; }
+  button:disabled { background:#9aa3ad; cursor:default; }
+  .nota { font-size:12px; color:var(--fraco); margin-top:8px; }
+  .grade { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:16px; }
+  .card { background:var(--card); border:1px solid var(--linha); border-radius:8px; padding:16px; }
+  .card h2 { margin:0 0 12px; font-size:14px; text-transform:uppercase; letter-spacing:.04em; color:var(--fraco); }
+  .numero { font-size:30px; font-weight:700; line-height:1; }
+  .numero span { font-size:14px; font-weight:400; color:var(--fraco); }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { text-align:left; padding:6px 4px; border-bottom:1px solid var(--linha); }
+  th { font-size:12px; color:var(--fraco); text-transform:uppercase; }
+  .par { display:flex; justify-content:space-between; gap:10px; padding:5px 0; font-size:14px; border-bottom:1px solid var(--linha); }
+  .par span:last-child { font-variant-numeric:tabular-nums; }
+  .barra { background:#e8ebef; border-radius:3px; height:10px; min-width:110px; }
+  #coordDias td:last-child { width:45%; }
+  .barra > div { background:#2f6f9f; height:10px; border-radius:3px; }
+  .aviso-item { border-left:4px solid; padding:8px 12px; margin-bottom:8px; border-radius:4px; font-size:14px; background:#fff; }
+  .s-ok { border-color:var(--ok); color:var(--ok); }
+  .s-aviso { border-color:var(--aviso); color:var(--aviso); }
+  .s-erro { border-color:var(--erro); color:var(--erro); }
+  .escondido { display:none; }
+  footer { max-width:1040px; margin:0 auto; padding:0 20px 28px; font-size:12px; color:var(--fraco); }
+</style>
+</head>
+<body>
+<header>
+  <h1>GpsEquipe - Painel administrativo</h1>
+  <p>Diretoria de Ensino Centro Oeste - SEDUC/SP</p>
+</header>
+
+<main>
+  <div class="acesso">
+    <label for="chave">Chave de acesso</label>
+    <div class="linha">
+      <input type="password" id="chave" autocomplete="off" placeholder="cole a chave da funcao VerStatus">
+      <button id="btEntrar">Carregar status</button>
+      <button id="btAtualizar" class="secundario escondido">Atualizar</button>
+    </div>
+    <p class="nota">A chave fica apenas na memoria desta aba e desaparece ao fechar a pagina. Nao e gravada no navegador.</p>
+    <div id="mensagem"></div>
+  </div>
+
+  <div id="painel" class="escondido">
+    <div id="alertas"></div>
+    <div class="grade">
+      <div class="card">
+        <h2>Colaboradores</h2>
+        <p class="numero" id="colTotal">-<span> cadastrados</span></p>
+        <div class="par"><span>Com PIN definido</span><span id="colComPin">-</span></div>
+        <div class="par"><span>Sem PIN</span><span id="colSemPin">-</span></div>
+        <table>
+          <thead><tr><th>Celular</th><th>PIN</th><th>Definido em</th></tr></thead>
+          <tbody id="colLista"></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Coordenadas recebidas</h2>
+        <p class="numero" id="coordTotal">-<span id="coordJanela"></span></p>
+        <table>
+          <thead><tr><th>Dia (UTC)</th><th>Envios</th><th></th></tr></thead>
+          <tbody id="coordDias"></tbody>
+        </table>
+        <div id="coordUltima" style="margin-top:12px"></div>
+      </div>
+
+      <div class="card">
+        <h2>Retencao e LGPD</h2>
+        <div class="par"><span>Prazo de retencao</span><span id="lgRet">-</span></div>
+        <div class="par"><span>Anonimiza antes de</span><span id="lgLimite">-</span></div>
+        <div class="par"><span>Registros anonimizados</span><span id="lgAnon">-</span></div>
+        <div class="par"><span>Agendamento (CRON)</span><span id="lgCron">-</span></div>
+        <div class="par"><span>Proxima execucao</span><span id="lgProx">-</span></div>
+      </div>
+
+      <div class="card">
+        <h2>Servidor</h2>
+        <div class="par"><span>Hora de Brasilia</span><span id="svBr">-</span></div>
+        <div class="par"><span>Hora UTC</span><span id="svUtc">-</span></div>
+        <div class="par"><span>Runtime</span><span id="svFw">-</span></div>
+        <div class="par"><span>Leitura feita as</span><span id="svLido">-</span></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  Dados exibidos com o celular mascarado: o painel identifica a linha sem precisar do numero inteiro.
+  Envio de posicao e feito pelos colaboradores em outra pagina.
+</footer>
+
+<script>
+var API = 'https://gpsequipe-app-bad1.azurewebsites.net/api/verstatus';
+var chave = null;
+
+function el(id) { return document.getElementById(id); }
+function msg(texto, classe) {
+  el('mensagem').innerHTML = texto ? '<div class="aviso-item ' + classe + '">' + texto + '</div>' : '';
+}
+function horasDesde(textoBr) {
+  // "13/09/2026 15:33:57" em hora de Brasilia -> ISO com deslocamento fixo -03:00
+  var m = /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2}):(\d{2})$/.exec(textoBr || '');
+  if (!m) { return null; }
+  var iso = m[3] + '-' + m[2] + '-' + m[1] + 'T' + m[4] + ':' + m[5] + ':' + m[6] + '-03:00';
+  var t = Date.parse(iso);
+  if (isNaN(t)) { return null; }
+  return (Date.now() - t) / 3600000;
+}
+
+function veredito(d) {
+  var itens = [];
+  if (d.colaboradores.total === 0) {
+    itens.push(['s-erro', 'Nenhum colaborador cadastrado: o sistema nao aceita envio de ninguem.']);
+  }
+  if (d.colaboradores.semPin > 0) {
+    itens.push(['s-aviso', d.colaboradores.semPin + ' colaborador(es) sem PIN definido. Falha fechada: eles recebem 403 ao tentar enviar.']);
+  }
+  if (d.coordenadas.total === 0) {
+    itens.push(['s-erro', 'Nenhuma coordenada nos ultimos ' + d.coordenadas.janelaDias + ' dias.']);
+  } else if (d.coordenadas.ultima) {
+    var h = horasDesde(d.coordenadas.ultima.dataHora);
+    if (h !== null && h > 24) {
+      itens.push(['s-aviso', 'Ultimo envio ha ' + Math.floor(h) + ' horas.']);
+    }
+  }
+  if (itens.length === 0) {
+    itens.push(['s-ok', 'Sem alertas: cadastro com PIN em dia e envios recentes.']);
+  }
+  el('alertas').innerHTML = itens.map(function (i) {
+    return '<div class="aviso-item ' + i[0] + '">' + i[1] + '</div>';
+  }).join('');
+}
+
+function desenhar(d) {
+  veredito(d);
+
+  el('colTotal').innerHTML = d.colaboradores.total + '<span> cadastrados</span>';
+  el('colComPin').textContent = d.colaboradores.comPin;
+  el('colSemPin').textContent = d.colaboradores.semPin;
+  el('colLista').innerHTML = d.colaboradores.lista.map(function (c) {
+    return '<tr><td>' + c.celular + '</td><td>' + (c.temPin ? 'sim' : 'NAO') + '</td><td>' +
+           (c.pinDefinidoEm || '-') + '</td></tr>';
+  }).join('') || '<tr><td colspan="3">nenhum</td></tr>';
+
+  el('coordTotal').innerHTML = d.coordenadas.total + '<span id="coordJanela"> em ' + d.coordenadas.janelaDias + ' dias</span>';
+  var maior = d.coordenadas.porDia.reduce(function (a, p) { return Math.max(a, p.quantidade); }, 1);
+  el('coordDias').innerHTML = d.coordenadas.porDia.map(function (p) {
+    var pc = Math.round(p.quantidade * 100 / maior);
+    return '<tr><td>' + p.dia + '</td><td>' + p.quantidade +
+           '</td><td><div class="barra"><div style="width:' + pc + '%"></div></div></td></tr>';
+  }).join('') || '<tr><td colspan="3">sem envios na janela</td></tr>';
+  var u = d.coordenadas.ultima;
+  el('coordUltima').innerHTML = u
+    ? '<strong>Ultima posicao</strong><br>' + u.celular + ' em ' + u.dataHora +
+      '<br>' + u.latitude + ', ' + u.longitude
+    : '<strong>Ultima posicao</strong><br>nenhuma na janela';
+
+  el('lgRet').textContent = d.lgpd.diasRetencao + ' dias';
+  el('lgLimite').textContent = d.lgpd.limiteAnonimizacao;
+  el('lgAnon').textContent = d.lgpd.registrosAnonimizados;
+  el('lgCron').textContent = d.lgpd.cron;
+  el('lgProx').textContent = d.lgpd.proximaExecucaoBrasilia + ' (BRT)';
+
+  el('svBr').textContent = d.servidor.brasilia;
+  el('svUtc').textContent = d.servidor.utc;
+  el('svFw').textContent = d.servidor.framework;
+  el('svLido').textContent = new Date().toLocaleTimeString('pt-BR');
+
+  el('painel').classList.remove('escondido');
+  el('btAtualizar').classList.remove('escondido');
+}
+
+async function carregar() {
+  var campo = el('chave');
+  if (campo.value.trim()) { chave = campo.value.trim(); campo.value = ''; }
+  if (!chave) { msg('Informe a chave de acesso.', 's-erro'); return; }
+
+  el('btEntrar').disabled = true;
+  el('btAtualizar').disabled = true;
+  msg('Consultando...', 's-aviso');
+  try {
+    var r = await fetch(API + '?code=' + encodeURIComponent(chave));
+    if (r.status === 401) { chave = null; msg('Chave invalida ou ausente (401).', 's-erro'); return; }
+    if (r.status === 502) { msg('O servidor nao conseguiu ler as tabelas (502).', 's-erro'); return; }
+    if (!r.ok) { msg('Resposta inesperada: HTTP ' + r.status + '.', 's-erro'); return; }
+    desenhar(await r.json());
+    msg('', '');
+  } catch (e) {
+    msg('Falha de rede ao chamar a API. Se a pagina esta aberta em outro endereco que nao o site do projeto, o navegador bloqueia por CORS.', 's-erro');
+  } finally {
+    el('btEntrar').disabled = false;
+    el('btAtualizar').disabled = false;
+  }
+}
+
+el('btEntrar').addEventListener('click', carregar);
+el('btAtualizar').addEventListener('click', carregar);
+el('chave').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { carregar(); } });
+</script>
+</body>
+</html>
