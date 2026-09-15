@@ -611,5 +611,290 @@ PENDÊNCIAS ABERTAS ACRESCENTADAS À SEÇÃO 11:
     da DECO, NÃO custo de frota por quilometragem.
 
 ================================================================================
+  REGISTRO ADICIONAL — 2026-09-15
+  Incremento 6 (painel administrativo), lições novas, roteiro de demonstração
+  e pesquisa de canal de SMS.
+  Mesma regra do arquivo: só entra aqui o que foi executado e cujo output foi
+  visto. O que não foi verificado está marcado como PENDENTE ou SUSPEITA.
+  Separadores em ASCII de propósito, para o trecho sobreviver a qualquer
+  conversão de codificação.
+================================================================================
+
+--------------------------------------------------------------------------------
+  A — INCREMENTO 6: PAINEL ADMINISTRATIVO
+--------------------------------------------------------------------------------
+Motivação declarada pelo aluno: o status do sistema só existia via Azure CLI e
+Application Insights. Nenhum administrador que não fosse o próprio
+desenvolvedor conseguia olhar.
+
+ARQUIVOS NOVOS
+  VerStatus.cs              GET, AuthorizationLevel.Function. Devolve JSON com
+                            quatro blocos: servidor, colaboradores, coordenadas
+                            e lgpd. ContentResult com application/json, pelo
+                            mesmo motivo do relatório usar ContentResult:
+                            controle explícito do Content-Type.
+  GerenciarColaborador.cs   POST, AuthorizationLevel.Function. Ações cadastrar
+                            e remover. Contrato uniforme { ok, mensagem } em
+                            qualquer status, para o painel tratar sucesso e
+                            erro pelo mesmo caminho.
+  admin.html                Página no container $web, ao lado do index.html.
+
+DECISÕES DE PROJETO
+  1. Duas funções novas, não quatro. O PIN continua no DefinirPin, que já
+     existe e já valida formato. Reimplementar PBKDF2 no painel criaria duas
+     fontes para a mesma regra.
+  2. Chave digitada em campo do tipo password e mantida só em memória da aba,
+     mesmo padrão do PIN no index.html. A chave não está no HTML, no código nem
+     no repositório — é o aceite do Incremento 1 aplicado ao painel.
+  3. A chave vai na query string do fetch, não em header x-functions-key. GET
+     sem header customizado é requisição simples e não dispara preflight. Como
+     fetch não navega, a URL com a chave não entra no histórico do navegador.
+  4. Celular mascarado na tela: 4 primeiros dígitos, asteriscos, 4 últimos
+     (5511*****3855). O painel precisa identificar a linha, não precisa do
+     número inteiro. É minimização de dado pessoal.
+  5. A consulta de coordenadas usa faixa de PartitionKey
+     (PartitionKey ge inicio and PartitionKey le fim), janela de 7 dias. Custa
+     proporcional à janela, não ao tamanho da tabela — terceira vez que a
+     escolha da partição por data se paga.
+  6. A contagem de registros já anonimizados é varredura, sem partição, porque
+     registro anonimizado não tem partição própria. Aceitável no volume deste
+     projeto, e declarado em comentário no código.
+  7. A próxima execução do Timer é derivada do CRON conhecido, não lida do
+     host. Se o CRON mudar no AnonimizarCoordenadas, precisa mudar no
+     VerStatus também. Acoplamento consciente, registrado no código.
+
+CHAVE DE HOST — MEDIDO, NÃO SUPOSTO
+  az functionapp keys list ... --query "functionKeys.default" devolveu uma
+  chave de 56 caracteres que foi aceita pelo VerStatus, pelo DefinirPin e pelo
+  GerenciarColaborador. Com isso o painel pede uma chave só.
+  Contraste para o relatório:
+    chave de HOST    — emitida no nível da Function App, aceita por qualquer
+                       função com AuthorizationLevel.Function.
+    chave de FUNÇÃO  — emitida para uma função, vale só para ela. É a que se
+                       entrega ao gestor para o VerRelatorio.
+    O critério que separa as duas é o escopo de emissão.
+  LIMITAÇÃO DECLARADA: a chave de host abre também o VerRelatorio. Quem
+  administra vê a localização da equipe. Neste projeto o administrador é o
+  próprio desenvolvedor, mas a limitação existe e não deve ser escondida.
+
+COMANDOS EFETIVOS
+  dotnet build                                         0 aviso, 0 erro
+  func azure functionapp publish GpsEquipe-App-bad1    net9.0, exit 0
+  az storage blob upload --account-name gpsequipebad1 --container-name '$web'
+    --name admin.html --file C:\repo\GpsEquipe\admin.html
+    --content-type 'text/html; charset=utf-8' --overwrite --auth-mode key
+  az functionapp function list ...                     6 funções no ar
+
+ACEITES VERIFICADOS
+  [x] VerStatus responde HTTP 200 com os quatro blocos do JSON
+  [x] admin.html no ar, HTTP 200, text/html; charset=utf-8, sem BOM
+  [x] painel carregado no navegador: 1 colaborador com PIN, 26 coordenadas em
+      7 dias, barras de 12/09 (12) e 13/09 (14), LGPD com limite 2026-06-17 e
+      próxima execução 16/09 00:30 BRT, runtime .NET 9.0.19
+  [x] o painel INTERPRETA o estado, não só imprime: apareceu o aviso âmbar
+      "Ultimo envio ha 47 horas", derivado da última coordenada
+  [x] ciclo completo do GerenciarColaborador, com número descartável
+      5511900000001:
+        cadastrar          -> 201 { ok: true }
+        cadastrar de novo  -> 409 já cadastrado
+        celular sem o 55   -> 400 celular inválido
+        ação inexistente   -> 400 ação inválida
+        remover            -> 200 removido
+        remover de novo    -> 404 não encontrado
+      A tabela foi conferida antes e depois: dois registros, voltou a um.
+  [x] remoção usa o ETag lido pelo GetEntityIfExistsAsync, então falha se
+      alguém alterou o registro no meio
+  [x] GetEntityIfExistsAsync com .HasValue, o padrão que evita o CS0266 da v1
+
+PENDENTE DE ACEITE
+  [ ] os três botões do painel (Cadastrar, Definir PIN, Remover) exercitados
+      pelo navegador. Só o navegador pode dar esse aceite: o preflight foi
+      provado por OPTIONS, mas o clique real não foi feito.
+  [ ] correção da largura da barra do gráfico (min-width 110px e td a 45%)
+      publicada, ainda não conferida na tela.
+
+COMMITS
+  7dd737d  Incremento 6: VerStatus, admin.html e scripts de demonstração
+  7e74a50  Incremento 6: GerenciarColaborador e formulários de gestão
+  da87114  Demo: leitura de corpo de erro e aceite da cena 4
+
+CUSTO: R$ 0. Nenhum recurso novo. Mesma Function App, mesmo plano Consumption,
+mesmo storage.
+
+--------------------------------------------------------------------------------
+  B — LIÇÕES DESTA MÁQUINA (complementa a Seção 7)
+--------------------------------------------------------------------------------
+1. CORPO DE ERRO NO POWERSHELL 5.1 — a lição anterior estava incompleta, e a
+   causa agora está medida. O Invoke-WebRequest lê e CONSOME o stream de erro
+   para popular $_.ErrorDetails.Message SOMENTE quando a resposta de erro é
+   JSON. Medido no mesmo bloco, em 15/09/2026:
+     400 com application/json; charset=utf-8
+       -> ErrorDetails.Message PREENCHIDO, StreamReader VAZIO
+     403 com text/plain; charset=utf-8
+       -> ErrorDetails.Message VAZIO, StreamReader com o texto
+   REGRA ROBUSTA, aplicada em demo/Demo-2-Preparar.ps1 e no cena.ps1 gerado por
+   ele: tentar ErrorDetails.Message primeiro e cair no StreamReader apenas se
+   vier vazio. Nunca depender de um dos dois isoladamente.
+   CONSEQUÊNCIA QUE QUASE PASSOU: o aceite automático da cena 4 comparava só se
+   os três textos eram iguais. Três textos VAZIOS também são iguais, então o
+   script marcaria PRONTO e o vídeo gravaria um 403 sem mensagem na tela. O
+   aceite passou a exigir corpo legível nos três casos.
+
+2. CORS CONFERIDO COMO O NAVEGADOR CONFERE — dá para simular o preflight sem
+   abrir navegador, mandando OPTIONS com os headers Origin,
+   Access-Control-Request-Method e Access-Control-Request-Headers.
+   Resultado em 15/09/2026, nas três rotas administrativas:
+     HTTP 204, allow-origin igual à origem do site estático,
+     allow-headers content-type, allow-methods POST.
+   Com Origin de um domínio estranho: HTTP 204 SEM allow-origin, e é isso que
+   faz o navegador abortar a chamada. A permissão é dirigida, não curinga —
+   decisão tomada na Fase 1 e só comprovada agora.
+
+3. ARQUIVO GRAVADO COM LF E O AVISO DO GIT — todo arquivo criado por
+   [IO.File]::WriteAllText sai com LF, e o git avisa que vai trocar por CRLF na
+   próxima vez que tocar o arquivo. Efeito prático: âncora de várias linhas
+   para edição por Replace() quebra depois de um checkout. Editar sempre por
+   âncora de UMA linha.
+
+4. BLOB ATUALIZADO NÃO APARECE SEM RECARGA FORÇADA — depois de um upload com
+   --overwrite, o navegador continua servindo a versão em cache. Conferir
+   sempre pelo tamanho em bytes e recarregar com Ctrl+F5.
+
+5. TESTE DE ACENTO QUE NÃO TESTA NADA — a verificação de integridade do
+   admin.html casava as palavras "administrativo" e "Retencao", que não têm
+   acento nenhum. O teste passou sem provar o que dizia provar. Verificação de
+   codificação tem de usar um caractere fora do ASCII.
+
+--------------------------------------------------------------------------------
+  C — ROTEIRO DE DEMONSTRAÇÃO E SCRIPTS DE APOIO
+--------------------------------------------------------------------------------
+Entregues no repositório, commit 7dd737d:
+  Roteiro-Demonstracao-GpsEquipe.md   9 cenas, alvo de 10 minutos
+  demo/Demo-1-Limpar.ps1              limpa a base antes de gravar
+  demo/Demo-2-Preparar.ps1            prepara e devolve checklist PRONTO/PENDENTE
+  demo/Demo-3-Encerrar.ps1            rotaciona a chave e apaga os segredos locais
+
+Os três começam pela guarda de tenant condicional e abortam antes de qualquer
+escrita se a assinatura não for a acadêmica. Os dois destrutivos
+(Demo-1 e Demo-3) só agem com -Executar; sem o parâmetro, apenas listam o que
+seria afetado. Nenhum dos três imprime segredo no console, por causa do
+transcript ativo nesta máquina.
+
+DECISÕES DO ROTEIRO
+  1. A limpeza padrão apaga só a partição UTC de hoje, não a tabela inteira. O
+     mapa da cena do relatório precisa mostrar apenas os pontos enviados ao
+     vivo, mas o filtro por período precisa de dias anteriores com dado real.
+     Apagar tudo resolveria o primeiro problema e criaria o segundo.
+  2. A cena da LGPD é feita ao vivo por disparo manual na API administrativa
+     (POST /admin/functions/AnonimizarCoordenadas, header x-functions-key com a
+     master key, corpo {"input":""}, resposta 202), em vez de esperar as 00h30.
+     O CRON é mostrado à parte, para não confundir agendamento com disparo.
+  3. O registro anonimizado na cena é uma semente de teste, criada com data de
+     janeiro, e o roteiro manda declarar isso em voz alta antes de rodar. Dado
+     real de janeiro não existe: o sistema entrou no ar em setembro.
+  4. A chave do relatório aparece na barra de endereços durante a gravação e é
+     rotacionada depois, pelo Demo-3. Verificado na documentação da Microsoft
+     em 15/09/2026: em az functionapp function keys set o parâmetro --key-value
+     é opcional, e sem ele a Azure gera o valor e devolve o resultado
+     mascarado.
+
+--------------------------------------------------------------------------------
+  D — PESQUISA DE CANAL DE SMS (15/09/2026)
+--------------------------------------------------------------------------------
+Objetivo pretendido: a aplicação entregar o PIN ao celular cadastrado, em vez
+de o administrador entregar de boca.
+
+CONCLUSÃO DA PESQUISA: SMS gratuito e sustentável não existe no Brasil. Todo
+"grátis" é crédito de teste finito ou trial restrito a números previamente
+verificados. Serve para este projeto porque o evento é raro — um SMS por
+colaborador por semestre — e não serve para operação contínua.
+
+  Comtele (BR)      10 créditos liberados após o cadastro. Melhor opção.
+  SMSDev (BR)       conta gratuita com créditos de cortesia para homologação.
+  SMSGo (BR)        R$ 10 ao criar a conta, sem cartão, e chave de teste que
+                    não debita saldo.
+  Twilio            unidades gratuitas por produto, cerca de 100 SMS, mas só
+                    para números verificados (até 5) e SEM corpo de mensagem
+                    próprio: o trial obriga a usar os modelos da própria
+                    Twilio. Um PIN não cabe nessa restrição.
+  Azure Comm. Serv. nada gratuito. SMS é cobrado por segmento conforme o
+                    destino, e crédito pré-pago da Azure não é elegível para
+                    comprar o produto.
+  WhatsApp Cloud    mensagens de serviço e templates utility dentro da janela
+                    de 24 horas ainda são gratuitos, mas passam a ser cobrados
+                    em 01/10/2026. Exige WhatsApp Business account verificada e
+                    número dedicado. Template de autenticação para o Brasil em
+                    torno de US$ 0,0225 por mensagem.
+  Telegram Bot API  gratuito e sem limite de volume relevante (ordem de 30
+                    mensagens por segundo no geral, 1 por segundo no mesmo
+                    chat). Não é SMS e exige que o colaborador inicie conversa
+                    com o bot.
+
+DECISÃO: Comtele para o SMS, Telegram como canal ilimitado de reserva.
+Preço por SMS da Comtele fora do teste NÃO foi verificado.
+
+DECISÃO ARQUITETURAL QUE O SMS OBRIGA (ainda não implementada): o DefinirPin
+passa a gerar o PIN internamente, enviar por SMS e devolver apenas "enviado",
+sem o valor na resposta. Isso muda a garantia do sistema:
+  ✔ passa a ser verificação de POSSE DO APARELHO — só recebe o PIN quem está
+    com o chip daquele número;
+  ✘ continua NÃO sendo autenticação de identidade — quem tem o aparelho não é
+    necessariamente o servidor da diretoria.
+  Efeito colateral positivo: o administrador deixa de conhecer o PIN de
+  qualquer colaborador.
+
+--------------------------------------------------------------------------------
+  E — PENDÊNCIAS ABERTAS (atualizado em 2026-09-15)
+--------------------------------------------------------------------------------
+  1. Os três botões do painel não foram exercitados pelo navegador.
+  2. As chaves novas (VerStatus, GerenciarColaborador e a chave de host) não
+     entram na rotação feita pelo Demo-3-Encerrar.ps1, que só rotaciona a do
+     VerRelatorio.
+  3. SUSPEITA NÃO VERIFICADA no VerRelatorio.cs: o "hoje" é calculado com
+     ToOffset(-3).Date, mas a PartitionKey de Coordenadas é a data UTC do
+     envio. Se o filtro monta a partição a partir da data em Brasília, todo
+     envio feito entre 21:00 e 23:59 BRT cai na partição do dia seguinte e não
+     aparece no "hoje" do relatório. Precisa ler o trecho do filtro antes de
+     afirmar qualquer coisa.
+  4. ModoDeUso-GpsEquipe.md não documenta o painel administrativo nem as
+     funções VerStatus e GerenciarColaborador.
+  5. Conta no provedor de SMS não criada; canal de SMS não implementado.
+  6. Transcripts contaminados de 12/09 seguem pendentes de exclusão manual
+     (a rotação das chaves é o que de fato neutralizou o vazamento).
+  7. Artigos da LGPD citados no aviso do site não verificados no Vade Mecum.
+  8. Trilha de extensão DreamShaper em 2 de 20 etapas.
+  9. Reflexões escritas: por decisão do aluno, todas ficam para o fim do
+     projeto.
+
+================================================================================
+--------------------------------------------------------------------------------
+  F - LICAO DESCOBERTA NA PROPRIA GRAVACAO DESTE REGISTRO (2026-09-15)
+  (bloco em ASCII puro: o texto entrou por arquivo, nao pelo console)
+--------------------------------------------------------------------------------
+Em PowerShell 5.1, @(a,b,c) | Where-Object { ... } devolve ESCALAR quando sobra
+um unico item: o @() envolve o ARRAY DE ENTRADA, nao a saida do pipeline. Para
+garantir array, o @() precisa envolver o pipeline inteiro: @( ... | Where ... ).
+
+Efeito observado: $cand era string e $cand[0] devolveu o primeiro CARACTERE
+dela, o "C" de "C:\Users\...". O erro apareceu tres blocos adiante, na forma de
+"nao e possivel chamar um metodo em uma expressao de valor nulo", longe da
+causa real.
+
+Dano evitado: a cadeia de nulos fez o WriteAllText gravar o Anotacoes-v2.txt
+com ZERO bytes. O arquivo foi restaurado automaticamente porque o script tinha
+feito backup antes e validava o resultado depois (presenca do trecho, presenca
+de cedilha e til, ausencia de caractere de substituicao U+FFFD).
+
+Regra adotada: script que sobrescreve arquivo com historico faz backup antes,
+valida depois e restaura sozinho se a validacao falhar. Validacao pos-escrita
+vale mais que confianca na logica de escrita.
+
+Segunda regra: preferir foreach com Test-Path a indexar resultado de pipeline.
+
+================================================================================
+  FIM DO REGISTRO ADICIONAL DE 2026-09-15
+================================================================================
+
+================================================================================
   FIM DAS ANOTAÇÕES — v2 (projeto completo)
 ================================================================================
