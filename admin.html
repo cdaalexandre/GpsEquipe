@@ -40,6 +40,8 @@
   .s-aviso { border-color:var(--aviso); color:var(--aviso); }
   .s-erro { border-color:var(--erro); color:var(--erro); }
   .escondido { display:none; }
+  input[type=text] { flex:1 1 260px; padding:10px; border:1px solid #c3c9d2; border-radius:6px; font-size:15px; }
+  button.perigo { background:#a11b1b; }
   footer { max-width:1040px; margin:0 auto; padding:0 20px 28px; font-size:12px; color:var(--fraco); }
 </style>
 </head>
@@ -105,7 +107,25 @@
   </div>
 </main>
 
+<div id="gestao" class="escondido">
+  <main style="padding-top:0">
+    <div class="card">
+      <h2>Gestao de colaboradores</h2>
+      <div class="linha">
+        <input type="text" id="gCelular" inputmode="numeric" placeholder="5511982253855">
+        <button id="btCadastrar">Cadastrar</button>
+        <button id="btPin" class="secundario">Definir PIN</button>
+        <button id="btRemover" class="perigo">Remover</button>
+      </div>
+      <p class="nota">Apenas digitos, com 55 e DDD. Cadastrar NAO define PIN: sem PIN o colaborador recebe 403 ao tentar enviar (falha fechada).</p>
+      <div id="gMensagem"></div>
+      <div id="gPin"></div>
+    </div>
+  </main>
+</div>
+
 <footer>
+
   Dados exibidos com o celular mascarado: o painel identifica a linha sem precisar do numero inteiro.
   Envio de posicao e feito pelos colaboradores em outra pagina.
 </footer>
@@ -188,6 +208,7 @@ function desenhar(d) {
   el('svLido').textContent = new Date().toLocaleTimeString('pt-BR');
 
   el('painel').classList.remove('escondido');
+  el('gestao').classList.remove('escondido');
   el('btAtualizar').classList.remove('escondido');
 }
 
@@ -214,6 +235,72 @@ async function carregar() {
   }
 }
 
+var BASE = 'https://gpsequipe-app-bad1.azurewebsites.net/api';
+
+function gMsg(texto, classe) {
+  el('gMensagem').innerHTML = texto ? '<div class="aviso-item ' + classe + '">' + texto + '</div>' : '';
+}
+
+function soDigitos(v) { return (v || '').replace(/\D/g, ''); }
+
+// 6 digitos por sorteio criptografico. O servidor recusa PIN com digitos iguais,
+// entao o cliente ja evita gerar um assim.
+function pinAleatorio() {
+  var b = new Uint8Array(6), s = '';
+  crypto.getRandomValues(b);
+  for (var i = 0; i < 6; i++) { s += (b[i] % 10); }
+  return /^(\d)\1{5}$/.test(s) ? pinAleatorio() : s;
+}
+
+async function chamarAdmin(rota, corpo) {
+  var r = await fetch(BASE + rota + '?code=' + encodeURIComponent(chave), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(corpo)
+  });
+  var texto = await r.text();
+  var dados = null;
+  try { dados = JSON.parse(texto); } catch (e) { dados = null; }
+  var m = (dados && dados.mensagem) ? dados.mensagem : (texto || ('HTTP ' + r.status));
+  return { status: r.status, ok: r.ok, mensagem: m };
+}
+
+async function operar(acao) {
+  if (!chave) { gMsg('Carregue o status primeiro: a chave e a mesma.', 's-erro'); return; }
+  var cel = soDigitos(el('gCelular').value);
+  if (cel.length < 12) { gMsg('Informe o celular com 55 e DDD, so digitos.', 's-erro'); return; }
+  var fim = cel.slice(-4);
+
+  if (acao === 'remover' &&
+      !confirm('Remover a autorizacao do colaborador terminado em ' + fim + '?\n\nAs coordenadas ja enviadas permanecem na base.')) {
+    return;
+  }
+
+  el('gPin').innerHTML = '';
+  gMsg('Executando...', 's-aviso');
+  try {
+    var res;
+    if (acao === 'definirpin') {
+      var pin = pinAleatorio();
+      res = await chamarAdmin('/definirpin', { Celular: cel, Pin: pin });
+      if (res.ok) {
+        el('gPin').innerHTML = '<div class="aviso-item s-aviso"><strong>PIN do numero terminado em ' + fim +
+          ': ' + pin + '</strong><br>Anote e entregue ao colaborador. Nao sera exibido de novo. ' +
+          'Nao deixe esta tela visivel em gravacao de video.</div>';
+      }
+    } else {
+      res = await chamarAdmin('/gerenciarcolaborador', { Acao: acao, Celular: cel });
+    }
+    gMsg(res.mensagem + ' (HTTP ' + res.status + ')', res.ok ? 's-ok' : 's-erro');
+    if (res.ok) { el('gCelular').value = ''; await carregar(); }
+  } catch (e) {
+    gMsg('Falha de rede ou bloqueio de CORS na chamada POST. Veja o console do navegador.', 's-erro');
+  }
+}
+
+el('btCadastrar').addEventListener('click', function () { operar('cadastrar'); });
+el('btPin').addEventListener('click', function () { operar('definirpin'); });
+el('btRemover').addEventListener('click', function () { operar('remover'); });
 el('btEntrar').addEventListener('click', carregar);
 el('btAtualizar').addEventListener('click', carregar);
 el('chave').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { carregar(); } });
