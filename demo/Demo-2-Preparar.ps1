@@ -108,6 +108,11 @@ function Invoke-Http {
         if ($null -eq $resp) {
             return [pscustomobject]@{ Status = 0; Texto = $_.Exception.Message }
         }
+        # Verificado em 15/09/2026 nesta maquina: o Invoke-WebRequest do PS 5.1
+        # consome o stream de erro para popular ErrorDetails.Message, e ler o
+        # stream depois devolve vazio. Ordem correta: ErrorDetails primeiro.
+        $txt = [string]$_.ErrorDetails.Message
+        if (-not [string]::IsNullOrEmpty($txt)) { return [pscustomobject]@{ Status = [int]$resp.StatusCode; Texto = $txt } }
         $txt = ''
         try {
             $sr  = New-Object IO.StreamReader($resp.GetResponseStream())
@@ -263,7 +268,10 @@ foreach ($k in $casos) {
     $textos += ('' + $r.Status + '|' + $r.Texto)
 }
 $unico = (@($textos | Select-Object -Unique).Count -eq 1)
-Marcar 'falha fechada (cena 4)' ($unico -and $textos[0] -like '403*') ('3 casos, resposta unica: ' + $unico)
+# Tres textos VAZIOS tambem seriam "resposta unica". Exigir corpo legivel,
+# senao a Cena 4 grava um 403 sem mensagem na tela.
+$comTexto = (@($textos | Where-Object { $_ -match '\|\S' }).Count -eq 3)
+Marcar 'falha fechada (cena 4)' ($unico -and $comTexto -and $textos[0] -like '403*') ('3 casos, resposta unica: ' + $unico + ', com texto: ' + $comTexto)
 
 # --------------------------------------------------- 7. semente da cena LGPD
 Escrever ''
@@ -334,6 +342,8 @@ function Post-Coordenada($corpo) {
   } catch {
     $resp = $_.Exception.Response
     if ($null -eq $resp) { return ('sem resposta: ' + $_.Exception.Message) }
+    $t = [string]$_.ErrorDetails.Message
+    if (-not [string]::IsNullOrEmpty($t)) { return ('{0}  {1}' -f [int]$resp.StatusCode, $t) }
     $sr = New-Object IO.StreamReader($resp.GetResponseStream())
     $t = $sr.ReadToEnd(); $sr.Close()
     '{0}  {1}' -f [int]$resp.StatusCode, $t
