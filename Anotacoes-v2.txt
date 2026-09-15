@@ -935,6 +935,49 @@ primeira gravacao deste bloco G; o backup e a validacao pos-escrita
 restauraram o arquivo sozinhos.
 
 ================================================================================
+--------------------------------------------------------------------------------
+  H - ACEITE DA CORRECAO DE FUSO E O TIPO INFERIDO PELA CLI (2026-09-15)
+--------------------------------------------------------------------------------
+EXPERIMENTO: registro descartavel testefuso01 criado no instante 22:30 BRT do
+dia 15/09, que em UTC e 2026-09-16T01:30:00Z e portanto mora na particao
+2026-09-16, a do DIA SEGUINTE. E a janela exata do defeito.
+
+ACEITE, consultando por dia LOCAL:
+  dia 2026-09-14 -> nao aparece   (correto: nao e o dia dele)
+  dia 2026-09-15 -> APARECE       (correto: foi enviado as 22:30 deste dia)
+  dia 2026-09-16 -> nao aparece   (correto: a particao e desse dia, o EVENTO nao)
+PROVA INDEPENDENTE, pelos traces do Application Insights, nas duas consultas
+que leram a MESMA particao:
+  "Consulta de 2 particao(oes) leu 1 e manteve 1 no periodo local."  -> dia 15
+  "Consulta de 2 particao(oes) leu 1 e manteve 0 no periodo local."  -> dia 16
+  Mesma leitura, resultados diferentes depois do filtro local: e a correcao
+  funcionando, nao coincidencia.
+Registro descartavel apagado por exclusao nomeada; base conferida em 0.
+
+LICAO NOVA - A CLI INFERE O TIPO DA PROPRIEDADE:
+  az storage entity insert deduz o EdmType pelo valor. Um celular como
+  5511900000003 parece numero, entao a CLI tenta Edm.Int32 e falha com
+  "TypeError: 5511900000003 is too large to be cast to type EdmType.INT32".
+  O sufixo Celular@string="..." NAO resolveu nesta versao (az 2.90.0): o erro
+  foi identico ao do comando sem sufixo. Nao esta esclarecido se e bug da CLI ou
+  sintaxe incorreta; fica registrado como comportamento MEDIDO.
+  O QUE FUNCIONA: valor com pelo menos uma letra, que forca Edm.String. Foi o
+  que a semente da LGPD de 12/09 usou (abc5511000000000) e o que este teste
+  usou (cel5511900000003).
+  Consequencia pratica: registro de teste criado pela CLI nunca tera celular
+  com aparencia de telefone puro. Envio real nao passa por aqui - vem do
+  ReceberCoordenadas, que grava via Azure.Data.Tables com tipo declarado na
+  entidade C#.
+
+ERRO DE METODO QUE ATRASOU ISTO EM DOIS BLOCOS:
+  o insert foi executado com 2>$null e o $LASTEXITCODE nao foi checado antes de
+  seguir. O exit 1 passou batido, e as duas medidas seguintes deram "nao
+  aparece" - mas por AUSENCIA DE DADO, nao por comportamento do filtro. Quase
+  virou um falso aceite ao contrario: a correcao ja estava certa e parecia
+  errada. Reforca a licao ja registrada na Secao 7: comando de escrita nao leva
+  2>$null, e toda escrita checa $LASTEXITCODE antes do passo seguinte.
+
+================================================================================
   FIM DO REGISTRO ADICIONAL DE 2026-09-15
 ================================================================================
 
