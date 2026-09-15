@@ -55,11 +55,11 @@
   <div class="acesso">
     <label for="chave">Chave de acesso</label>
     <div class="linha">
-      <input type="password" id="chave" autocomplete="off" placeholder="cole a chave da funcao VerStatus">
+      <input type="password" id="chave" autocomplete="off" placeholder="cole a chave de HOST da Function App">
       <button id="btEntrar">Carregar status</button>
       <button id="btAtualizar" class="secundario escondido">Atualizar</button>
     </div>
-    <p class="nota">A chave fica apenas na memoria desta aba e desaparece ao fechar a pagina. Nao e gravada no navegador.</p>
+    <p class="nota">Use a chave de HOST da Function App: ela atende status, cadastro e PIN. A chave de funcao do VerStatus abre so o status. A chave fica apenas na memoria desta aba e desaparece ao fechar a pagina.</p>
     <div id="mensagem"></div>
   </div>
 
@@ -262,6 +262,9 @@ async function chamarAdmin(rota, corpo) {
   var dados = null;
   try { dados = JSON.parse(texto); } catch (e) { dados = null; }
   var m = (dados && dados.mensagem) ? dados.mensagem : (texto || ('HTTP ' + r.status));
+  // 401 aqui quase sempre significa chave de FUNCAO em vez de chave de HOST:
+  // a de funcao abre o status e recusa cadastro e PIN.
+  if (r.status === 401) { m = 'Nao autorizado (401). Esta chave provavelmente e a da funcao VerStatus, que abre so o status. Use a chave de HOST da Function App.'; }
   return { status: r.status, ok: r.ok, mensagem: m };
 }
 
