@@ -892,6 +892,49 @@ vale mais que confianca na logica de escrita.
 Segunda regra: preferir foreach com Test-Path a indexar resultado de pipeline.
 
 ================================================================================
+--------------------------------------------------------------------------------
+  G - ACEITE FINAL DO INCREMENTO 6, CHAVES E O DEFEITO DE FUSO (2026-09-15)
+--------------------------------------------------------------------------------
+ACEITE QUE FALTAVA, VERIFICADO NO NAVEGADOR:
+  [x] Cadastrar pelo painel -> 201 e recarga automatica do status
+  [x] o alerta "1 colaborador(es) sem PIN definido" apareceu SOZINHO, derivado
+      do estado: o painel avisa da falha fechada ANTES de o servidor recusar o
+      primeiro envio dessa pessoa com 403
+  [x] Definir PIN pelo painel -> 200, PIN sorteado no navegador com
+      crypto.getRandomValues e exibido uma unica vez
+  [x] o alerta de "sem PIN" desapareceu depois do PIN definido
+  [x] Remover -> confirmacao com so os 4 ultimos digitos, depois 200
+  Incremento 6 fechado com 7 de 7 aceites.
+
+CORRECAO DA NOTA SOBRE CHAVES (bloco A):
+  A chave de FUNCAO do VerStatus e a chave de HOST tem o MESMO tamanho, 56
+  caracteres, e sao DIFERENTES. Medido rota por rota:
+    chave de funcao -> verstatus 200 | gerenciarcolaborador 401 | definirpin 401
+    chave de host   -> verstatus 200 | gerenciarcolaborador 400 | definirpin 404
+  Os 400 e 404 provam que a chave de host foi ACEITA: sao respostas da validacao
+  do codigo, nao recusa de credencial. Sintoma que levou ao erro: o painel
+  carregava o status e os tres botoes davam 401, porque o arquivo de chave havia
+  sido gerado com --function-name VerStatus. Commit 60968d2.
+
+DEFEITO DE FUSO NO VerRelatorio (confirmado por leitura do codigo):
+  hoje = DateTimeOffset.UtcNow.ToOffset(-3).Date, ou seja data de BRASILIA, e as
+  particoes eram montadas a partir dela. Mas a PartitionKey de Coordenadas e a
+  data UTC do envio. Envio das 21:00 as 23:59 BRT grava na particao do DIA
+  SEGUINTE e desaparecia do dia em que foi feito.
+  CORRECAO: consulta uma particao EXTRA (dias + 1) e descarta em memoria o que
+  pertence a outro dia local, comparando DataHoraUtc.ToOffset(-3).Date com o
+  intervalo pedido. Mantem data de Brasilia na tela, que e o que o gestor
+  espera, e continua consulta de particao, nao varredura.
+  ALTERNATIVA DESCARTADA: passar tudo para UTC faria o relatorio dizer
+  "hoje = 16/09" as 22h de Brasilia.
+
+LICAO DE CONSOLE: ao colar bloco no PowerShell 5.1, o "else" precisa ficar na
+MESMA linha do fecha-chaves ("} else {"). Em linha separada, o parser trata como
+comando solto e devolve "o termo 'else' nao e reconhecido". Foi o que impediu a
+primeira gravacao deste bloco G; o backup e a validacao pos-escrita
+restauraram o arquivo sozinhos.
+
+================================================================================
   FIM DO REGISTRO ADICIONAL DE 2026-09-15
 ================================================================================
 

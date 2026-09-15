@@ -60,7 +60,10 @@ public class VerRelatorio
         }
 
         // Uma cláusula por partição: consulta de partição, não varredura da tabela.
-        var particoes = Enumerable.Range(0, dias)
+        // A PartitionKey e a data UTC do envio, mas inicio e fim sao datas de
+        // Brasilia. Um dia local cobre dois dias UTC, entao le-se uma particao
+        // EXTRA e o excedente e descartado pelo horario local mais abaixo.
+        var particoes = Enumerable.Range(0, dias + 1)
             .Select(d => inicio.AddDays(d).ToString("yyyy-MM-dd", inv))
             .ToList();
         var filtro = string.Join(" or ", particoes.Select(p => "PartitionKey eq '" + p + "'"));
@@ -72,7 +75,12 @@ public class VerRelatorio
             registros.Add(item);
         }
 
-        _logger.LogInformation("Consulta de {dias} particao(oes) retornou {n} registro(s).", dias, registros.Count);
+        // Descarta o que veio da particao extra mas pertence a outro dia local.
+        var lidos = registros.Count;
+        registros = registros
+            .Where(r => r.DataHoraUtc.ToOffset(fuso).Date >= inicio && r.DataHoraUtc.ToOffset(fuso).Date <= fim)
+            .ToList();
+        _logger.LogInformation("Consulta de {dias} particao(oes) leu {lidos} e manteve {n} no periodo local.", dias + 1, lidos, registros.Count);
 
         var sInicio = inicio.ToString("yyyy-MM-dd", inv);
         var sFim = fim.ToString("yyyy-MM-dd", inv);
