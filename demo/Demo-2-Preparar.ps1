@@ -57,7 +57,8 @@ $LON       = -46.6333
 
 $PART_LGPD = '2026-01-01'      # particao antiga da cena LGPD
 $ROW_LGPD  = 'demolgpd01'
-$CEL_LGPD  = '5511000000000'   # numero ficticio, so para a demonstracao
+$CEL_LGPD  = 'cel5511000000000'  # PRECISA de letra: valor so com digitos faz a
+                                  # CLI inferir Edm.Int32 e estourar (licao bloco H)
 
 $PASTA     = 'C:\demo-gpsequipe'
 $ARQ_SEG   = Join-Path $PASTA 'segredos-demo.txt'
@@ -318,6 +319,19 @@ if ($SemPinNovo) {
 # --------------------------------- 5. teste ponta a ponta por TOKEN
 Escrever ''
 Escrever '--- 5. TESTE PONTA A PONTA POR TOKEN (com faxina do registro) ---'
+# O caso 4 gravou um registro enquanto o teste estava errado. Faxina defensiva:
+# nenhum caso da secao 6 deveria gravar nada, mas conferir e barato.
+$hojeFax = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
+$sobrando = @(Get-Linhas $TB_COORD ("PartitionKey eq '" + $hojeFax + "'") | Where-Object { $_.RowKey -notin $antes })
+if ($sobrando.Count -gt 0) {
+    Escrever ('ATENCAO: ' + $sobrando.Count + ' registro(s) gravado(s) pelos testes de falha -> apagando')
+    foreach ($s in $sobrando) {
+        az storage entity delete --account-name $STO --table-name $TB_COORD `
+            --partition-key $s.PartitionKey --row-key $s.RowKey --auth-mode key -o none 2>$null
+    }
+} else {
+    Escrever 'nenhum teste de falha gravou registro (correto)'
+}
 $tokenTeste = $null
 if ($null -eq $segredoLocal) {
     Escrever 'sem segredo em disco: nao consigo calcular codigo. Rode com -NovoTotp.'
@@ -358,8 +372,14 @@ Escrever ''
 Escrever '--- 6. FALHAS DE IDENTIFICACAO (esperado: 403 com texto identico) ---'
 $tokenFalso = 'aaaa.bbbb'
 if ($tokenTeste) {
-    $ultimo = $tokenTeste.Substring($tokenTeste.Length - 1)
-    $tokenFalso = $tokenTeste.Substring(0, $tokenTeste.Length - 1) + $(if ($ultimo -eq 'A') { 'B' } else { 'A' })
+    # A assinatura tem 32 bytes = 43 caracteres base64 sem padding, e 43x6=258
+    # bits: os 2 ultimos bits do ULTIMO caractere nao codificam nada. Trocar o
+    # ultimo caractere entre A e B decodifica para os MESMOS bytes, e o token
+    # continua valido. Adulterar o PRIMEIRO caractere da assinatura, cujos 6
+    # bits sao todos significativos.
+    $partes = $tokenTeste.Split('.')
+    $pri = $partes[1].Substring(0, 1)
+    $tokenFalso = $partes[0] + '.' + $(if ($pri -eq 'A') { 'Z' } else { 'A' }) + $partes[1].Substring(1)
 }
 $casos = @(
     @{ n = '1. codigo TOTP errado';   rota = 'iniciarsessao';      c = @{ Celular = $CEL; Codigo = '000001' } },
@@ -386,6 +406,19 @@ if ($tokenTeste) {
            -Corpo (@{ Celular = '5511900000002'; Token = $tokenTeste; Latitude = $LAT; Longitude = $LON } | ConvertTo-Json -Compress)
     Escrever (('{0,-24} {1,-20} -> {2}  [{3}]' -f '7. token de outro numero', 'recebercoordenadas', $r.Status, $r.Texto))
     Marcar 'celular amarrado ao token' ($r.Status -eq 403) 'token de um numero recusado para outro'
+}
+# O caso 4 gravou um registro enquanto o teste estava errado. Faxina defensiva:
+# nenhum caso da secao 6 deveria gravar nada, mas conferir e barato.
+$hojeFax = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
+$sobrando = @(Get-Linhas $TB_COORD ("PartitionKey eq '" + $hojeFax + "'") | Where-Object { $_.RowKey -notin $antes })
+if ($sobrando.Count -gt 0) {
+    Escrever ('ATENCAO: ' + $sobrando.Count + ' registro(s) gravado(s) pelos testes de falha -> apagando')
+    foreach ($s in $sobrando) {
+        az storage entity delete --account-name $STO --table-name $TB_COORD `
+            --partition-key $s.PartitionKey --row-key $s.RowKey --auth-mode key -o none 2>$null
+    }
+} else {
+    Escrever 'nenhum teste de falha gravou registro (correto)'
 }
 $tokenTeste = $null
 # --------------------------------------------------- 7. semente da cena LGPD
