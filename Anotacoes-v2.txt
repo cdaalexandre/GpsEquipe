@@ -1089,7 +1089,8 @@ depois da gravacao, para nao mexer no caminho critico da Cena 3 antes do video.
   FIM DO REGISTRO ADICIONAL DE 2026-09-15
 ================================================================================
 
-============================================================================────────────────────────────────────────────────────────────────────────────────
+================================================================================
+────────────────────────────────────────────────────────────────────────────────
   INCREMENTO 8A — PORTA DO GESTOR POR TELA (2026-09-16)
 ────────────────────────────────────────────────────────────────────────────────
 Motivo: a chave do relatorio ia na query string (?code=), ou seja no historico do
@@ -1200,10 +1201,20 @@ LICOES DE FERRAMENTA:
   - [IO.File] resolve caminho relativo pelo diretorio do processo .NET, nao pelo
     Set-Location do PowerShell. Sempre caminho absoluto.
 
-PENDENTE: ModoDeUso-GpsEquipe.md ainda descreve o site legado por PIN, dois
-enderecos de colaborador e o botao Definir PIN. Roteiro-Demonstracao tem a
-Cena 3 gravando PIN e o P2 pondo a chave na barra de enderecos. Ambos obsoletos.
+DOCUMENTACAO ALINHADA NO MESMO DIA (16/09):
+  ModoDeUso-GpsEquipe.md  reescrito, commit 6ec293b
+  README.md               reescrito, commit e4fa9f5 (7 functions, app settings
+                          TokenChaveHmac e ChaveGestor no provisionamento)
+  demo/Demo-2-Preparar.ps1 secao 4b fora, 3 checagens de regressao de PIN,
+                          commit bc45e5a
+  demo/Demo-3 e Demo-1    rotacao passa a ser da ChaveGestor, commit 0b94155
+  Contexto.ps1            novo: despeja o estado do projeto para abrir conversa
+                          nova, commit 6cc2415
+O Roteiro-Demonstracao-GpsEquipe.md foi DESCARTADO: existia so no Project
+Knowledge, nunca no repositorio, e os tres scripts demo/ o substituiram. As
+copias da documentacao tambem sairam do Project Knowledge de proposito: copia
+que envelhece mente com autoridade. O repositorio e a fonte unica.
 
-====
+================================================================================
   FIM DAS ANOTAÇÕES — v2 (projeto completo)
 ================================================================================
