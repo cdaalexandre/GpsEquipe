@@ -1089,6 +1089,59 @@ depois da gravacao, para nao mexer no caminho critico da Cena 3 antes do video.
   FIM DO REGISTRO ADICIONAL DE 2026-09-15
 ================================================================================
 
-================================================================================
+============================================================================────────────────────────────────────────────────────────────────────────────────
+  INCREMENTO 8A — PORTA DO GESTOR POR TELA (2026-09-16)
+────────────────────────────────────────────────────────────────────────────────
+Motivo: a chave do relatorio ia na query string (?code=), ou seja no historico do
+navegador, nos favoritos e nos logs do Azure. Agora ela e digitada numa tela.
+
+Alteracoes efetivas:
+  SegurancaToken.cs  → EmitirGestor / ValidarGestor / ConferirSegredo
+    (+54 linhas, 0 deletadas: Emitir e Validar do Incremento 7 intactos, e as
+    sessoes de colaborador abertas continuaram valendo)
+  VerRelatorio.cs    → AuthorizationLevel.Function para Anonymous, "get" + "post";
+    serve a tela de entrada com 401 quando nao ha cookie valido; POST confere a
+    chave e grava o cookie; metodo Porta() desenha o formulario (+90 / -1)
+  App setting novo   → ChaveGestor, 43 caracteres (32 bytes em base64url), gerada
+    por RandomNumberGenerator e gravada sem passar pelo console
+  func azure functionapp publish GpsEquipe-App-bad1 → 7 functions sincronizadas
+
+SEPARACAO DE PAPEL, ESTRUTURAL: o payload do gestor e "g1|expiraUnix", 2 campos.
+O do colaborador continua "v1|celular|expiraUnix|carimboSegredo", 4 campos.
+Validar exige 4 campos e prefixo "v1"; ValidarGestor exige 2 e "g1". A chave HMAC
+e a mesma, mas nao existe caminho em que um confira o token do outro. Nao ha campo
+"papel" que alguem possa esquecer de ler: o papel E a estrutura do payload, dentro
+da assinatura.
+
+Cookie: HttpOnly, Secure, SameSite=Strict, Path=/api/verrelatorio, validade de 8
+horas (SegurancaToken.HorasValidade, a mesma do colaborador). Set-Cookie de 177
+bytes, conferido no cabecalho cru.
+
+ACEITES — todos verificados em 2026-09-16:
+  [x] GET sem cookie                        → 401 + tela de entrada
+  [x] POST com chave errada                 → 401
+  [x] GET com cookie lixo ("abc.def")       → 401
+  [x] GET com token v1 FORJADO (assinatura valida com a TokenChaveHmac real,
+      prazo valido, celular cadastrado)     → 401, relatorio NAO vazou
+  [x] POST com a chave certa → 302, Location /api/verrelatorio, cookie emitido;
+      GET seguinte → 200 com o relatorio real, 2085 bytes
+
+GANHO COLATERAL: a chave de HOST deixou de abrir o relatorio. A limitacao
+registrada no ModoDeUso ("quem administra ve a localizacao da equipe") foi
+resolvida sem trabalho extra.
+
+CUSTO ASSUMIDO: a protecao do relatorio saiu da plataforma e entrou no meu
+codigo. Quem fecha a rota agora e ValidarGestor, nao o host do Functions.
+
+PENDENTE: o redirect apos o POST e 302. O correto e 303 See Other, que forca a
+troca de POST para GET em vez de depender do costume dos navegadores. Entra no
+publish do 8B.
+
+LICAO DE FERRAMENTA: para forjar o token v1 em PowerShell 5.1 e testar a porta,
+New-Object System.Security.Cryptography.HMACSHA256(,$bytes) — a virgula a esquerda
+e obrigatoria, senao o PS espalha os 32 bytes em 32 parametros e o construtor nao
+casa. E -MaximumRedirection 0 levanta excecao sem objeto Response: para ler um 302
+foi preciso [Net.HttpWebRequest] cru.
+====
   FIM DAS ANOTAÇÕES — v2 (projeto completo)
 ================================================================================

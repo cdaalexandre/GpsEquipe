@@ -17,16 +17,63 @@ public class VerRelatorio
 {
     private readonly ILogger<VerRelatorio> _logger;
     private const int MaximoDeDias = 31;
+    private const string NomeCookie = "gpsequipe_gestor";
 
     public VerRelatorio(ILogger<VerRelatorio> logger)
     {
         _logger = logger;
     }
 
+    // Incremento 8A: Anonymous porque a porta passou a ser o cookie de sessao,
+    // nao a chave de funcao. A chave de funcao ficava na query string, ou seja no
+    // historico do navegador, nos favoritos e nos logs do proprio Azure.
+    // CONSEQUENCIA ASSUMIDA: quem protege esta rota agora e ValidarGestor, meu
+    // codigo, e nao mais o host do Functions.
     [Function("VerRelatorio")]
     public async Task<IActionResult> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "get")] HttpRequest req)
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post")] HttpRequest req)
     {
+        var chaveHmac = SegurancaToken.LerChave(Environment.GetEnvironmentVariable("TokenChaveHmac"));
+        var chaveGestor = Environment.GetEnvironmentVariable("ChaveGestor");
+        if (chaveHmac.Length < 32 || string.IsNullOrWhiteSpace(chaveGestor))
+        {
+            _logger.LogError("App setting TokenChaveHmac ou ChaveGestor ausente.");
+            return new StatusCodeResult(500);
+        }
+
+        // POST: a tela mandou a chave digitada. Confere e emite o cookie.
+        if (HttpMethods.IsPost(req.Method))
+        {
+            var digitada = string.Empty;
+            if (req.HasFormContentType)
+            {
+                var form = await req.ReadFormAsync();
+                digitada = form["chave"].ToString();
+            }
+            if (!SegurancaToken.ConferirSegredo(digitada, chaveGestor))
+            {
+                _logger.LogWarning("Entrada de gestor recusada (chave de {N} caracteres).", digitada.Length);
+                return Porta(401, "Chave invalida.");
+            }
+            var sessao = SegurancaToken.EmitirGestor(chaveHmac);
+            _logger.LogInformation("Sessao de gestor iniciada, expira {Expira}.", sessao.ExpiraEm);
+            req.HttpContext.Response.Cookies.Append(NomeCookie, sessao.Token, new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.Strict,
+                Path = "/api/verrelatorio",
+                Expires = sessao.ExpiraEm
+            });
+            return new RedirectResult("/api/verrelatorio", false);
+        }
+
+        // GET sem cookie valido: nao mostra dado nenhum, mostra a porta.
+        if (!SegurancaToken.ValidarGestor(chaveHmac, req.Cookies[NomeCookie]))
+        {
+            return Porta(401, null);
+        }
+
         var conexao = Environment.GetEnvironmentVariable("TabelaConnectionString");
         if (string.IsNullOrWhiteSpace(conexao))
         {
@@ -231,6 +278,47 @@ if(todos.length===1){
             Content = html.ToString(),
             ContentType = MediaTypeNames.Text.Html,
             StatusCode = 200
+        };
+    }
+
+    // Incremento 8A: a tela de entrada. Sai com 401 de proposito: o aceite do
+    // Roteiro (P1) testa "relatorio sem chave -> 401" e continua valendo.
+    // O campo e type=password para nao aparecer na tela nem em gravacao de video.
+    private static IActionResult Porta(int status, string? erro)
+    {
+        var html = new StringBuilder();
+        html.Append("<!DOCTYPE html><html lang='pt-BR'><head><meta charset='utf-8'>");
+        html.Append("<meta name='viewport' content='width=device-width, initial-scale=1'>");
+        html.Append("<title>GpsEquipe - Acesso do gestor</title><style>");
+        html.Append("body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#eef1f4;color:#222;");
+        html.Append("display:flex;min-height:100vh;align-items:center;justify-content:center}");
+        html.Append(".cartao{background:#fff;padding:28px;border-radius:8px;max-width:380px;width:90%;");
+        html.Append("box-shadow:0 1px 4px rgba(0,0,0,.18)}");
+        html.Append("h1{font-size:18px;margin:0 0 4px}p{font-size:13px;color:#555;margin:0 0 18px}");
+        html.Append("label{font-size:13px;display:block;margin-bottom:6px}");
+        html.Append("input{width:100%;padding:10px;font-size:15px;border:1px solid #bbb;border-radius:4px;box-sizing:border-box}");
+        html.Append("button{width:100%;margin-top:14px;padding:11px;font-size:15px;border:0;border-radius:4px;");
+        html.Append("background:#1565c0;color:#fff;cursor:pointer}");
+        html.Append(".erro{background:#fdecea;color:#8a1c12;padding:9px 11px;border-radius:4px;font-size:13px;margin-bottom:14px}");
+        html.Append(".nota{font-size:12px;color:#777;margin:16px 0 0}");
+        html.Append("</style></head><body><div class='cartao'>");
+        html.Append("<h1>Diretoria de Ensino Centro Oeste - SEDUC/SP</h1>");
+        html.Append("<p>Relatorio de rastreamento. Acesso restrito.</p>");
+        if (!string.IsNullOrEmpty(erro))
+        {
+            html.Append("<div class='erro'>").Append(erro).Append("</div>");
+        }
+        html.Append("<form method='post' action='/api/verrelatorio'>");
+        html.Append("<label for='chave'>Chave de acesso</label>");
+        html.Append("<input type='password' id='chave' name='chave' autocomplete='off' autofocus>");
+        html.Append("<button type='submit'>Entrar</button></form>");
+        html.Append("<p class='nota'>A chave e fornecida pelo administrador. A sessao vale 8 horas.</p>");
+        html.Append("</div></body></html>");
+        return new ContentResult
+        {
+            Content = html.ToString(),
+            ContentType = MediaTypeNames.Text.Html,
+            StatusCode = status
         };
     }
 
