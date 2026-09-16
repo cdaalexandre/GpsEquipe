@@ -29,6 +29,8 @@ public class ReceberCoordenadas
     {
         public string? Celular { get; set; }
         public string? Pin { get; set; }
+        // Incremento 7c: token de sessao emitido pelo IniciarSessao.
+        public string? Token { get; set; }
         public double Latitude { get; set; }
         public double Longitude { get; set; }
     }
@@ -63,7 +65,29 @@ public class ReceberCoordenadas
 
         // Incremento 5: PIN ausente ja falha como identificacao, nao como
         // erro de formato - para nao distinguir "faltou PIN" de "PIN errado".
-        if (string.IsNullOrWhiteSpace(dados.Pin))
+        // Incremento 7c: o token de sessao tem PRECEDENCIA sobre o PIN. Com token
+        // valido o PIN nao e exigido. Enquanto os dois convivem, a seguranca real
+        // e a do mais fraco: o PIN sai num passo proprio, depois da gravacao.
+        var porToken = false;
+        var celularToken = string.Empty;
+        long carimboToken = 0;
+        if (!string.IsNullOrWhiteSpace(dados.Token))
+        {
+            var chaveToken = SegurancaToken.LerChave(Environment.GetEnvironmentVariable("TokenChaveHmac"));
+            if (chaveToken.Length < 32)
+            {
+                _logger.LogError("App setting TokenChaveHmac ausente ou curta demais.");
+                return new StatusCodeResult(500);
+            }
+            if (!SegurancaToken.Validar(chaveToken, dados.Token, out celularToken, out carimboToken))
+            {
+                _logger.LogWarning("Token de sessao invalido ou expirado.");
+                return new ObjectResult(FalhaIdentificacao) { StatusCode = 403 };
+            }
+            porToken = true;
+        }
+
+        if (!porToken && string.IsNullOrWhiteSpace(dados.Pin))
         {
             _logger.LogWarning("Envio sem PIN.");
             return new ObjectResult(FalhaIdentificacao) { StatusCode = 403 };
@@ -74,6 +98,16 @@ public class ReceberCoordenadas
 
         // GetEntityIfExistsAsync devolve NullableResponse: testa-se HasValue.
         // Foi o uso de GetEntityAsync aqui que gerou o CS0266 na v1.
+        // O celular vai assinado dentro do token: token de um numero nao serve
+        // para enviar posicao de outro.
+        if (porToken && celularToken != celular)
+        {
+            _logger.LogWarning("Token de final {a} usado para enviar como final {b}.",
+                celularToken.Length >= 4 ? celularToken.Substring(celularToken.Length - 4) : "----",
+                celular.Length >= 4 ? celular.Substring(celular.Length - 4) : "----");
+            return new ObjectResult(FalhaIdentificacao) { StatusCode = 403 };
+        }
+
         var permitidos = new TableClient(conexao, "FuncionariosPermitidos");
         var consulta = await permitidos.GetEntityIfExistsAsync<FuncionarioPermitidoEntidade>("FUNCIONARIO", celular);
         if (!consulta.HasValue)
@@ -85,13 +119,26 @@ public class ReceberCoordenadas
         var funcionario = consulta.Value!;
 
         // Falha fechada: cadastro sem PIN definido NAO envia.
-        if (string.IsNullOrWhiteSpace(funcionario.PinSalt) || string.IsNullOrWhiteSpace(funcionario.PinHash))
+        // Unica revogacao que este desenho permite: se o TOTP foi recadastrado
+        // depois da emissao, o carimbo muda e o token antigo morre. A leitura da
+        // linha ja acontecia para o PIN, entao a verificacao sai de graca.
+        if (porToken)
+        {
+            var carimboAtual = funcionario.TotpDefinidoEm.HasValue ? funcionario.TotpDefinidoEm.Value.ToUnixTimeSeconds() : 0;
+            if (carimboAtual == 0 || carimboAtual != carimboToken)
+            {
+                _logger.LogWarning("Token com carimbo de segredo antigo (final {q}).", celular.Substring(celular.Length - 4));
+                return new ObjectResult(FalhaIdentificacao) { StatusCode = 403 };
+            }
+        }
+
+        if (!porToken && (string.IsNullOrWhiteSpace(funcionario.PinSalt) || string.IsNullOrWhiteSpace(funcionario.PinHash)))
         {
             _logger.LogWarning("Celular {celular} cadastrado sem PIN definido.", celular);
             return new ObjectResult(FalhaIdentificacao) { StatusCode = 403 };
         }
 
-        if (!SegurancaPin.Conferir(dados.Pin.Trim(), funcionario.PinSalt, funcionario.PinHash))
+        if (!porToken && !SegurancaPin.Conferir(dados.Pin!.Trim(), funcionario.PinSalt, funcionario.PinHash))
         {
             _logger.LogWarning("PIN incorreto para {celular}.", celular);
             return new ObjectResult(FalhaIdentificacao) { StatusCode = 403 };

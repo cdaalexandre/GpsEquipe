@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rastreamento de Colaboradores (Authenticator)</title>
+<style>
+  body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:20px;background:#f4f6f8;color:#222}
+  .caixa{max-width:420px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.15)}
+  h1{font-size:18px;margin:0 0 4px}
+  h2{font-size:14px;font-weight:normal;color:#666;margin:0 0 20px}
+  label{display:block;font-size:14px;margin-bottom:6px}
+  input{width:100%;padding:10px;font-size:16px;border:1px solid #bbb;border-radius:4px;box-sizing:border-box}
+  .campo{margin-bottom:12px}
+  .dica{font-size:12px;color:#666;margin-top:4px}
+  button{width:100%;padding:12px;font-size:16px;border:0;border-radius:4px;margin-top:12px;cursor:pointer}
+  #iniciar{background:#0a6b3d;color:#fff}
+  #parar{background:#8b1a1a;color:#fff;display:none}
+  #estado{margin-top:16px;padding:10px;border-radius:4px;font-size:14px;min-height:20px}
+  .ok{background:#e6f4ea;color:#0a6b3d}
+  .erro{background:#fdecea;color:#8b1a1a}
+  .neutro{background:#eef1f4;color:#444}
+  #contador{margin-top:8px;font-size:12px;color:#666}
+  #sessao{margin-top:8px;font-size:12px;color:#0a3d6b}
+  .aviso{margin-top:20px;border-top:1px solid #e2e6ea;padding-top:12px;font-size:12px;color:#555;line-height:1.5}
+  .aviso summary{cursor:pointer;font-weight:bold;color:#0a3d6b}
+  .aviso ul{padding-left:18px;margin:8px 0 0}
+</style>
+</head>
+<body>
+<div class="caixa">
+  <h1>Diretoria de Ensino Centro Oeste - SEDUC/SP</h1>
+  <h2>Rastreamento de colaboradores em campo</h2>
+
+  <div class="campo">
+    <label for="celular">Seu celular, com DDD</label>
+    <input id="celular" type="tel" placeholder="+5511982253855" autocomplete="tel">
+  </div>
+
+  <div class="campo">
+    <label for="codigo">Codigo do Microsoft Authenticator</label>
+    <input id="codigo" type="tel" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="000000">
+    <div class="dica">Codigo de 6 digitos da entrada GpsEquipe. Troca a cada 30 segundos.
+      Se errar, espere o proximo codigo antes de tentar de novo.</div>
+  </div>
+
+  <button id="iniciar">Iniciar rastreamento</button>
+  <button id="parar">Parar</button>
+
+  <div id="estado" class="neutro">Aguardando inicio.</div>
+  <div id="sessao"></div>
+  <div id="contador"></div>
+
+  <!-- Dever de informacao ao titular (LGPD, Lei 13.709/2018). -->
+  <details class="aviso">
+    <summary>Como seus dados sao tratados</summary>
+    <ul>
+      <li><b>O que e coletado:</b> seu numero de celular, a latitude e a longitude
+          do aparelho e a data e hora de cada envio.</li>
+      <li><b>Finalidade:</b> comprovar o atendimento tecnico realizado nas unidades
+          escolares da Diretoria de Ensino Centro Oeste e apoiar o planejamento
+          da distribuicao da equipe em campo.</li>
+      <li><b>Base legal:</b> tratamento necessario a execucao de politica publica
+          pela administracao publica.</li>
+      <li><b>Quando e coletado:</b> somente enquanto esta pagina estiver aberta e
+          o rastreamento estiver iniciado por voce. Ao tocar em Parar, a coleta
+          cessa imediatamente.</li>
+      <li><b>Quem acessa:</b> a gestao da Diretoria, por relatorio protegido por
+          chave de acesso.</li>
+      <li><b>Retencao:</b> apos 90 dias o vinculo entre as coordenadas e o seu
+          numero e apagado de forma irreversivel. Local e horario permanecem sem
+          identificacao.</li>
+      <li><b>Sua identificacao:</b> o codigo do Authenticator prova que o aparelho
+          e seu e vale uma unica vez. O sistema nao recebe nem guarda a sua senha.
+          A sessao expira automaticamente.</li>
+    </ul>
+  </details>
+</div>
+
+<script>
+var BASE = "https://gpsequipe-app-bad1.azurewebsites.net/api";
+var INTERVALO_MS = 10000;
+
+var timer = null;
+var enviados = 0;
+// O token fica SO em memoria desta aba: nao vai para localStorage nem para a URL,
+// e desaparece ao fechar a pagina ou ao tocar em Parar.
+var tokenSessao = "";
+var expiraEm = null;
+var elCelular = document.getElementById("celular");
+var elCodigo = document.getElementById("codigo");
+var elIniciar = document.getElementById("iniciar");
+var elParar = document.getElementById("parar");
+var elEstado = document.getElementById("estado");
+var elSessao = document.getElementById("sessao");
+var elContador = document.getElementById("contador");
+
+function mostrar(texto, classe) {
+  elEstado.textContent = texto;
+  elEstado.className = classe;
+}
+
+function pararRastreio() {
+  if (timer) { clearInterval(timer); timer = null; }
+  tokenSessao = "";
+  expiraEm = null;
+  elSessao.textContent = "";
+  elIniciar.style.display = "block";
+  elParar.style.display = "none";
+  elCelular.disabled = false;
+  elCodigo.disabled = false;
+}
+
+function enviarPosicao() {
+  if (!navigator.geolocation) {
+    mostrar("Este navegador nao oferece geolocalizacao.", "erro");
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(function (pos) {
+    var corpo = {
+      Celular: elCelular.value.trim(),
+      Token: tokenSessao,
+      Latitude: pos.coords.latitude,
+      Longitude: pos.coords.longitude
+    };
+    fetch(BASE + "/recebercoordenadas", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(corpo)
+    }).then(function (r) {
+      if (r.status === 403) {
+        r.text().then(function (msg) {
+          mostrar((msg || "Identificacao invalida.") + " Inicie de novo com um codigo novo.", "erro");
+        });
+        pararRastreio();
+        return null;
+      }
+      if (!r.ok) {
+        mostrar("Falha no envio. Codigo " + r.status + ". Tentando de novo.", "erro");
+        return null;
+      }
+      return r.text();
+    }).then(function (t) {
+      if (t) {
+        enviados = enviados + 1;
+        mostrar(t, "ok");
+        elContador.textContent = "Envios: " + enviados + " | ultimo as " + new Date().toLocaleTimeString("pt-BR");
+      }
+    }).catch(function () {
+      mostrar("Sem conexao com a API. Tentando de novo.", "erro");
+    });
+  }, function (err) {
+    mostrar("GPS indisponivel: " + err.message, "erro");
+  }, { enableHighAccuracy: true, timeout: 9000, maximumAge: 0 });
+}
+
+elIniciar.addEventListener("click", function () {
+  var numero = elCelular.value.trim();
+  if (numero.replace(/\D/g, "").length < 12) {
+    mostrar("Informe o numero completo, com codigo do pais e DDD.", "erro");
+    return;
+  }
+  var codigo = elCodigo.value.trim();
+  if (!/^[0-9]{6}$/.test(codigo)) {
+    mostrar("Informe o codigo de 6 digitos do Authenticator.", "erro");
+    return;
+  }
+  elIniciar.disabled = true;
+  mostrar("Validando codigo...", "neutro");
+
+  fetch(BASE + "/iniciarsessao", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ Celular: numero, Codigo: codigo })
+  }).then(function (r) {
+    if (r.ok) { return r.json(); }
+    return r.text().then(function (msg) { throw new Error(msg || ("HTTP " + r.status)); });
+  }).then(function (j) {
+    tokenSessao = j.token;
+    expiraEm = new Date(j.expiraEmUtc);
+    elCodigo.value = "";
+    elCelular.disabled = true;
+    elCodigo.disabled = true;
+    elIniciar.style.display = "none";
+    elParar.style.display = "block";
+    elSessao.textContent = "Sessao valida ate " + expiraEm.toLocaleTimeString("pt-BR") +
+      " (" + j.validadeHoras + "h). O codigo usado nao serve mais.";
+    mostrar("Obtendo primeira posicao...", "neutro");
+    enviarPosicao();
+    timer = setInterval(enviarPosicao, INTERVALO_MS);
+  }).catch(function (e) {
+    mostrar(e.message + " Espere o codigo trocar e tente de novo.", "erro");
+  }).then(function () {
+    elIniciar.disabled = false;
+  });
+});
+
+elParar.addEventListener("click", function () {
+  pararRastreio();
+  mostrar("Rastreamento interrompido. A sessao foi descartada.", "neutro");
+});
+</script>
+</body>
+</html>
