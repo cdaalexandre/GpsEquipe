@@ -210,6 +210,198 @@ obrigações distintas, e eu tinha tratado uma como se cobrisse a outra.
 O aviso entrou no site em bloco recolhido, para cumprir a informação sem
 empurrar sete parágrafos na frente de quem só quer tocar num botão.
 
+*Esta seção descreve o PIN, que foi extirpado do sistema no Incremento 8B — ver
+seção 9. A conferência a cada dez segundos, apontada acima como erro
+arquitetural, foi resolvida pelo token de sessão do Incremento 7.*
+
+---
+
+## 8. A porta do gestor: quando a proteção muda de dono
+
+**Tirei a chave da URL e, no mesmo movimento, transferi para o meu código uma
+responsabilidade que era do Azure.**
+
+O relatório mostra a localização de pessoas. Até o Incremento 8A ele era
+protegido por chave de função, que viajava na query string: `?code=...`. Isso
+punha o segredo no histórico do navegador, nos favoritos e nos logs do próprio
+Azure.
+
+Agora a chave é digitada numa tela e trocada por um cookie de sessão.
+
+O que mudou não foi a interface.
+
+✔ **Proteção de plataforma:** o host do Azure Functions recusa a requisição
+antes de o meu código existir nela. Se eu escrever uma bobagem dentro da função,
+a porta continua fechada.
+
+✘ **Proteção de aplicação:** o host deixa passar, e quem decide é uma linha que
+eu escrevi. Se `ValidarGestor` tiver um defeito, o relatório fica público.
+
+O critério que separa os dois é *quem recusa* — e, por consequência, de quem é a
+culpa quando falha.
+
+Escolhi o segundo. Ganhei o segredo fora da URL; paguei assumindo a
+responsabilidade de barrar.
+
+### O ganho que eu não havia previsto
+
+A chave de host deixou de abrir o relatório.
+
+Antes, quem administrava o sistema via de graça a localização de toda a equipe —
+limitação que eu havia registrado no modo de uso sem saber como resolver. A
+separação entre administrar e vigiar saiu como efeito colateral de outra decisão.
+
+### O papel dentro da estrutura, não escrito no crachá
+
+Havia um risco que nenhum compilador pegaria.
+
+Eu já tinha um token de sessão, do Incremento 7, assinado com uma chave HMAC. Se
+eu reaproveitasse o mesmo formato para o gestor, qualquer colaborador com sessão
+aberta poderia apresentar o token dele na porta do relatório — assinatura
+válida, prazo válido — e entrar.
+
+O jeito comum de evitar isso é escrever um campo no token: `papel=gestor`. Aí o
+validador precisa **lembrar de ler** esse campo.
+
+Analogia: plugue de três pinos não entra em tomada de dois. Ninguém confere a
+voltagem escrita no aparelho; a forma impede o encaixe.
+
+Fiz pela forma:
+
+| Papel | Payload | Campos |
+| --- | --- | --- |
+| Colaborador | `v1\|celular\|expira\|carimbo` | 4 |
+| Gestor | `g1\|expira` | 2 |
+
+Cada validador exige o seu prefixo e o seu número de campos. A chave que assina
+é a mesma, mas um token de colaborador não *encaixa* no validador do gestor: é
+recusado por não ter a forma, antes de qualquer conferência de conteúdo.
+
+✔ **Papel estrutural:** está dentro da assinatura e é impossível de ignorar,
+porque é a própria forma daquilo que se está lendo.
+
+✘ **Campo de papel:** é um dado a mais que alguém precisa conferir — e "alguém
+esqueceu de conferir" descreve boa parte das falhas de autorização que existem.
+
+### A prova
+
+Não bastava eu achar que funcionava.
+
+Forjei, em PowerShell, um token de colaborador **perfeito**: assinatura válida
+calculada com a chave HMAC real do sistema, prazo válido, celular cadastrado.
+Apresentei como cookie de gestor.
+
+401. O relatório não vazou.
+
+Esse foi o único dos cinco aceites que provou algo que eu não sabia de antemão.
+Os outros recusaram lixo; este recusou um crachá legítimo do tipo errado.
+
+### O que continua aberto
+
+A sessão do gestor não pode ser revogada antes de vencer. Ela se verifica
+sozinha, sem consulta a banco, e por isso vale até oito horas.
+
+E a chave é única para todos os gestores. Ela autoriza, não identifica: trocá-la
+obriga todos a receberem a nova, e o log não diz quem entrou.
+
+---
+
+## 9. O fim do PIN: o caminho mais fraco é que define a segurança
+
+**Enquanto o PIN e o autenticador conviveram, a segurança do sistema era a do
+PIN. Ter dois caminhos não somou proteção — subtraiu.**
+
+O Incremento 5 acrescentou o PIN: seis dígitos fixos, sem expiração e sem
+bloqueio por tentativas, num endereço público.
+
+O Incremento 7 acrescentou o TOTP: um código de seis dígitos do Microsoft
+Authenticator, que muda a cada trinta segundos e só serve uma vez.
+
+Os dois ficaram ativos em paralelo.
+
+✔ **Posse:** o TOTP prova que a pessoa está com o aparelho em que a chave foi
+cadastrada. O código morre em trinta segundos.
+
+✘ **Conhecimento:** o PIN prova que a pessoa sabe um número de seis dígitos. Um
+milhão de combinações, testáveis à vontade, sem prazo.
+
+O critério que separa os dois é o que o atacante precisa **ter**, não o que ele
+precisa saber.
+
+E aqui está o que eu levo deste incremento: somar mecanismos não soma segurança.
+Quem ataca escolhe por onde entrar, e escolhe a porta mais fraca. Enquanto o PIN
+existia, o TOTP era decoração.
+
+### A troca que o TOTP impôs, e que é uma piora
+
+O PIN nunca foi armazenado. Guardava-se o salt e o resultado de cem mil
+iterações de PBKDF2 — nem eu recuperava o PIN de ninguém.
+
+O segredo do autenticador **é** armazenado em claro. Tem de ser: o servidor
+precisa dele para recalcular o código a cada trinta segundos.
+
+Verificação por comparação de hash × verificação por recálculo. A segunda não
+admite mão única.
+
+Consequência: um vazamento da tabela hoje expõe o segredo de todos os
+colaboradores, o que não acontecia com o PIN. Troquei um mecanismo mais forte na
+porta por um armazenamento mais frágil atrás dela. É uma decisão, não um
+descuido — e a correção, cifrar o segredo com chave guardada fora do storage,
+está declarada como trabalho futuro.
+
+### Remover é mais difícil que acrescentar
+
+O PIN estava em seis arquivos, numa função publicada, num site estático, num
+botão do painel e em três campos da tabela.
+
+Acrescentar mecanismo é escrever código novo. Remover é encontrar todo lugar que
+o supõe — e o compilador encontra apenas parte.
+
+O compilador achou os quatro erros de `Entidades.cs`. Não achou o botão
+**Definir PIN** no painel, que continuaria chamando uma rota inexistente. Nem os
+comentários que afirmavam, com autoridade, que "o PIN segue autorizando os
+envios".
+
+Comentário mentiroso em arquivo autoritativo é pior que comentário ausente.
+Alguém vai lê-lo — inclusive eu, em dois meses.
+
+### Eliminação não é anonimização
+
+Os campos de PIN na tabela eram dado pessoal coletado para uma finalidade que
+deixou de existir.
+
+✔ **Eliminação:** o dado sai da base, porque não há mais por que guardá-lo.
+
+✘ **Anonimização:** o registro fica e perde o vínculo com a pessoa, porque ainda
+serve para algo — é o que a rotina dos noventa dias faz com as coordenadas, que
+continuam úteis como trajeto.
+
+O critério é a finalidade, não o formato.
+
+### O detalhe técnico que quase me custou o acesso do colaborador
+
+`TableUpdateMode.Merge` nunca apaga propriedade: ele preserva o que o payload
+omite.
+
+Apagar campo exigiu `Replace`. E `Replace` com entidade incompleta apagaria o
+segredo do autenticador junto, deixando o colaborador sem conseguir enviar.
+
+O mesmo mecanismo que protege num lugar impede no outro. Eu já havia topado com
+ele pelo lado oposto no Incremento 7, quando um `Merge` com entidade parcial
+apagou o segredo por causa de um inicializador de propriedade.
+
+Testei em registro descartável antes de tocar o real. O teste pegou um erro — as
+aspas do etag removidas pelo PowerShell ao chamar executável nativo — que teria
+falhado no registro do único colaborador cadastrado.
+
+### O que o fim do PIN não resolveu
+
+O sistema agora prova posse de aparelho. Não prova identidade.
+
+Quem está com o celular não é, necessariamente, o servidor da Diretoria. A seção
+6 continua de pé nessa parte: autorização mais forte, autenticação de identidade
+ainda ausente.
+
 ---
 
 ## Observação final sobre o método de trabalho
@@ -234,3 +426,17 @@ A lição que se repete é sobre onde procurar. Nos cinco casos a mensagem de er
 apontava para um lugar e a causa estava em outro: no host, não no código; no
 cliente, não no servidor; no runtime que executa, não no que compila. Ler a
 mensagem é o primeiro passo. Desconfiar de onde ela aponta é o segundo.
+
+A rodada dos Incrementos 8A e 8B acrescentou uma lição de natureza diferente, e
+ela é sobre mim, não sobre a ferramenta. Três vezes eu escrevi uma verificação
+que afirmou sucesso lendo um estado que não havia mudado: três `True` conferidos
+depois de um `Replace` que falhou, um "arquivo gravado, UTF-8 válido" depois de
+uma inserção que gravou linha vazia, e uma contagem esperando zero menções a PIN
+num arquivo cuja função é justamente vigiar a palavra PIN. Nenhuma causou dano,
+porque o teste em registro descartável e as âncoras conferidas antes de escrever
+seguraram. Mas o padrão é o mesmo nos três: eu escrevi o teste de cabeça, a
+partir do que esperava, em vez de derivá-lo do texto real.
+
+A regra que fica é curta: conferência olha o conteúdo, não o veículo.
+"Compilou", "gravou" e "UTF-8 válido" dizem que o transporte funcionou, não que
+a carga é a certa.
