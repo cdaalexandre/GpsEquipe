@@ -324,19 +324,6 @@ if ($SemPinNovo) {
 # --------------------------------- 5. teste ponta a ponta por TOKEN
 Escrever ''
 Escrever '--- 5. TESTE PONTA A PONTA POR TOKEN (com faxina do registro) ---'
-# O caso 4 gravou um registro enquanto o teste estava errado. Faxina defensiva:
-# nenhum caso da secao 6 deveria gravar nada, mas conferir e barato.
-$hojeFax = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
-$sobrando = @(Get-Linhas $TB_COORD ("PartitionKey eq '" + $hojeFax + "'") | Where-Object { $_.RowKey -notin $antes })
-if ($sobrando.Count -gt 0) {
-    Escrever ('ATENCAO: ' + $sobrando.Count + ' registro(s) gravado(s) pelos testes de falha -> apagando')
-    foreach ($s in $sobrando) {
-        az storage entity delete --account-name $STO --table-name $TB_COORD `
-            --partition-key $s.PartitionKey --row-key $s.RowKey --auth-mode key -o none 2>$null
-    }
-} else {
-    Escrever 'nenhum teste de falha gravou registro (correto)'
-}
 $tokenTeste = $null
 if ($null -eq $segredoLocal) {
     Escrever 'sem segredo em disco: nao consigo calcular codigo. Rode com -NovoTotp.'
@@ -411,6 +398,26 @@ if ($tokenTeste) {
            -Corpo (@{ Celular = '5511900000002'; Token = $tokenTeste; Latitude = $LAT; Longitude = $LON } | ConvertTo-Json -Compress)
     Escrever (('{0,-24} {1,-20} -> {2}  [{3}]' -f '7. token de outro numero', 'recebercoordenadas', $r.Status, $r.Texto))
     Marcar 'celular amarrado ao token' ($r.Status -eq 403) 'token de um numero recusado para outro'
+}
+
+# Faxina defensiva: nenhum caso da secao 6 deveria gravar nada. GUARDA: sem
+# $antes definido a comparacao -notin seria verdadeira para TODAS as linhas e
+# varreria a particao do dia. Foi o que aconteceu em 16/09, por ancora casada
+# na primeira ocorrencia de $tokenTeste = $null, no inicio da secao 5.
+if ($null -eq $antes) {
+    Escrever 'faxina defensiva PULADA: $antes nao definido nesta execucao.'
+} else {
+    $hojeFax = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
+    $sobrando = @(Get-Linhas $TB_COORD ("PartitionKey eq '" + $hojeFax + "'") | Where-Object { $_.RowKey -notin $antes })
+    if ($sobrando.Count -gt 0) {
+        Escrever ('ATENCAO: ' + $sobrando.Count + ' registro(s) gravado(s) pelos testes de falha -> apagando')
+        foreach ($s in $sobrando) {
+            az storage entity delete --account-name $STO --table-name $TB_COORD `
+                --partition-key $s.PartitionKey --row-key $s.RowKey --auth-mode key -o none 2>$null
+        }
+    } else {
+        Escrever 'nenhum teste de falha gravou registro (correto)'
+    }
 }
 $tokenTeste = $null
 # --------------------------------------------------- 7. semente da cena LGPD
