@@ -341,7 +341,7 @@ if (@($todos).Count -eq 0) {
             cadastrado   = $_.TotpDefinidoEm
         }
     }
-    ($lista | Format-Table -AutoSize | Out-String).TrimEnd() | Write-Output
+    ($lista | Format-Table -AutoSize | Out-String).TrimEnd() | Write-Host
     $sem = @($lista | Where-Object { $_.autenticador -eq 'NAO' }).Count
     Escrever ''
     Escrever ('total: ' + @($lista).Count + ' | sem autenticador: ' + $sem)
