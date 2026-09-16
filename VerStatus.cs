@@ -54,19 +54,21 @@ public class VerStatus
         var tbFunc = servico.GetTableClient("FuncionariosPermitidos");
 
         var colaboradores = new List<object>();
-        int comPin = 0, semPin = 0;
+        int comTotp = 0, semTotp = 0;
         try
         {
             await foreach (var f in tbFunc.QueryAsync<FuncionarioPermitidoEntidade>("PartitionKey eq 'FUNCIONARIO'"))
             {
-                var tem = f.PinDefinidoEm.HasValue && !string.IsNullOrEmpty(f.PinHash);
-                if (tem) { comPin++; } else { semPin++; }
+                // Incremento 8B: a identificacao agora e o TOTP. Com o PIN extirpado,
+                // ter identificacao definida passou a significar ter segredo do autenticador.
+                var tem = f.TotpDefinidoEm.HasValue && !string.IsNullOrEmpty(f.TotpSegredo);
+                if (tem) { comTotp++; } else { semTotp++; }
                 colaboradores.Add(new
                 {
                     celular = Mascarar(f.RowKey),
-                    temPin = tem,
-                    pinDefinidoEm = f.PinDefinidoEm.HasValue
-                        ? f.PinDefinidoEm.Value.ToOffset(fuso).ToString("dd/MM/yyyy HH:mm", inv)
+                    temTotp = tem,
+                    totpDefinidoEm = f.TotpDefinidoEm.HasValue
+                        ? f.TotpDefinidoEm.Value.ToOffset(fuso).ToString("dd/MM/yyyy HH:mm", inv)
                         : (string?)null
                 });
             }
@@ -141,9 +143,9 @@ public class VerStatus
             },
             colaboradores = new
             {
-                total = comPin + semPin,
-                comPin,
-                semPin,
+                total = comTotp + semTotp,
+                comTotp,
+                semTotp,
                 lista = colaboradores
             },
             coordenadas = new

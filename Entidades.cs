@@ -22,6 +22,9 @@ public class CoordenadaEntidade : ITableEntity
 
 // Tabela FuncionariosPermitidos, esquema herdado da v1 (Secao 11):
 // PartitionKey = "FUNCIONARIO", RowKey = celular sem o sinal de mais.
+// Incremento 8B: PinSalt, PinHash e PinDefinidoEm sairam. O Table Storage nao tem
+// esquema fixo, entao as propriedades sobrevivem nas linhas antigas ate serem
+// apagadas na etapa 8B.4; o codigo simplesmente deixou de conhece-las.
 public class FuncionarioPermitidoEntidade : ITableEntity
 {
     public string PartitionKey { get; set; } = string.Empty;
@@ -29,16 +32,9 @@ public class FuncionarioPermitidoEntidade : ITableEntity
     public DateTimeOffset? Timestamp { get; set; }
     public ETag ETag { get; set; }
 
-    // Incremento 5: identificacao por PIN. O PIN em si nunca e gravado.
-    // Registros cadastrados antes do Incremento 5 nao tem estes campos:
-    // o Table Storage e sem esquema fixo e devolve string vazia neles.
-    public string PinSalt { get; set; } = string.Empty;
-    public string PinHash { get; set; } = string.Empty;
-    public DateTimeOffset? PinDefinidoEm { get; set; }
-
-    // Incremento 7: TOTP (RFC 6238). Diferente do PIN, o segredo NAO pode ser
-    // hash: o servidor precisa dele em claro para recalcular o codigo a cada
-    // janela de 30s. TotpUltimaJanela impede que o mesmo codigo seja reusado.
+    // Incremento 7: TOTP (RFC 6238). O segredo NAO pode ser hash: o servidor
+    // precisa dele em claro para recalcular o codigo a cada janela de 30s.
+    // TotpUltimaJanela impede que o mesmo codigo seja reusado.
     public string TotpSegredo { get; set; } = string.Empty;
     public DateTimeOffset? TotpDefinidoEm { get; set; }
     public long TotpUltimaJanela { get; set; }

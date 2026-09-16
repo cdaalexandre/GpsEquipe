@@ -59,7 +59,7 @@
       <button id="btEntrar">Carregar status</button>
       <button id="btAtualizar" class="secundario escondido">Atualizar</button>
     </div>
-    <p class="nota">Use a chave de HOST da Function App: ela atende status, cadastro e PIN. A chave de funcao do VerStatus abre so o status. A chave fica apenas na memoria desta aba e desaparece ao fechar a pagina.</p>
+    <p class="nota">Use a chave de HOST da Function App: ela atende status, cadastro e remocao. A chave de funcao do VerStatus abre so o status. A chave fica apenas na memoria desta aba e desaparece ao fechar a pagina.</p>
     <div id="mensagem"></div>
   </div>
 
@@ -69,10 +69,10 @@
       <div class="card">
         <h2>Colaboradores</h2>
         <p class="numero" id="colTotal">-<span> cadastrados</span></p>
-        <div class="par"><span>Com PIN definido</span><span id="colComPin">-</span></div>
-        <div class="par"><span>Sem PIN</span><span id="colSemPin">-</span></div>
+        <div class="par"><span>Com autenticador</span><span id="colComTotp">-</span></div>
+        <div class="par"><span>Sem autenticador</span><span id="colSemTotp">-</span></div>
         <table>
-          <thead><tr><th>Celular</th><th>PIN</th><th>Definido em</th></tr></thead>
+          <thead><tr><th>Celular</th><th>Autenticador</th><th>Cadastrado em</th></tr></thead>
           <tbody id="colLista"></tbody>
         </table>
       </div>
@@ -114,12 +114,10 @@
       <div class="linha">
         <input type="text" id="gCelular" inputmode="numeric" placeholder="5511982253855">
         <button id="btCadastrar">Cadastrar</button>
-        <button id="btPin" class="secundario">Definir PIN</button>
         <button id="btRemover" class="perigo">Remover</button>
       </div>
-      <p class="nota">Apenas digitos, com 55 e DDD. Cadastrar NAO define PIN: sem PIN o colaborador recebe 403 ao tentar enviar (falha fechada).</p>
+      <p class="nota">Apenas digitos, com 55 e DDD. Cadastrar NAO define a identificacao: sem o autenticador cadastrado o colaborador recebe 403 ao tentar enviar (falha fechada). O cadastro da chave do autenticador e feito por bloco PowerShell, nao por este painel: a chave e exibida uma unica vez e nao deve aparecer em tela de painel.</p>
       <div id="gMensagem"></div>
-      <div id="gPin"></div>
     </div>
   </main>
 </div>
@@ -153,8 +151,8 @@ function veredito(d) {
   if (d.colaboradores.total === 0) {
     itens.push(['s-erro', 'Nenhum colaborador cadastrado: o sistema nao aceita envio de ninguem.']);
   }
-  if (d.colaboradores.semPin > 0) {
-    itens.push(['s-aviso', d.colaboradores.semPin + ' colaborador(es) sem PIN definido. Falha fechada: eles recebem 403 ao tentar enviar.']);
+  if (d.colaboradores.semTotp > 0) {
+    itens.push(['s-aviso', d.colaboradores.semTotp + ' colaborador(es) sem autenticador cadastrado. Falha fechada: eles recebem 403 ao tentar enviar.']);
   }
   if (d.coordenadas.total === 0) {
     itens.push(['s-erro', 'Nenhuma coordenada nos ultimos ' + d.coordenadas.janelaDias + ' dias.']);
@@ -165,7 +163,7 @@ function veredito(d) {
     }
   }
   if (itens.length === 0) {
-    itens.push(['s-ok', 'Sem alertas: cadastro com PIN em dia e envios recentes.']);
+    itens.push(['s-ok', 'Sem alertas: identificacao em dia e envios recentes.']);
   }
   el('alertas').innerHTML = itens.map(function (i) {
     return '<div class="aviso-item ' + i[0] + '">' + i[1] + '</div>';
@@ -176,11 +174,11 @@ function desenhar(d) {
   veredito(d);
 
   el('colTotal').innerHTML = d.colaboradores.total + '<span> cadastrados</span>';
-  el('colComPin').textContent = d.colaboradores.comPin;
-  el('colSemPin').textContent = d.colaboradores.semPin;
+  el('colComTotp').textContent = d.colaboradores.comTotp;
+  el('colSemTotp').textContent = d.colaboradores.semTotp;
   el('colLista').innerHTML = d.colaboradores.lista.map(function (c) {
-    return '<tr><td>' + c.celular + '</td><td>' + (c.temPin ? 'sim' : 'NAO') + '</td><td>' +
-           (c.pinDefinidoEm || '-') + '</td></tr>';
+    return '<tr><td>' + c.celular + '</td><td>' + (c.temTotp ? 'sim' : 'NAO') + '</td><td>' +
+           (c.totpDefinidoEm || '-') + '</td></tr>';
   }).join('') || '<tr><td colspan="3">nenhum</td></tr>';
 
   el('coordTotal').innerHTML = d.coordenadas.total + '<span id="coordJanela"> em ' + d.coordenadas.janelaDias + ' dias</span>';
@@ -243,15 +241,6 @@ function gMsg(texto, classe) {
 
 function soDigitos(v) { return (v || '').replace(/\D/g, ''); }
 
-// 6 digitos por sorteio criptografico. O servidor recusa PIN com digitos iguais,
-// entao o cliente ja evita gerar um assim.
-function pinAleatorio() {
-  var b = new Uint8Array(6), s = '';
-  crypto.getRandomValues(b);
-  for (var i = 0; i < 6; i++) { s += (b[i] % 10); }
-  return /^(\d)\1{5}$/.test(s) ? pinAleatorio() : s;
-}
-
 async function chamarAdmin(rota, corpo) {
   var r = await fetch(BASE + rota + '?code=' + encodeURIComponent(chave), {
     method: 'POST',
@@ -263,7 +252,7 @@ async function chamarAdmin(rota, corpo) {
   try { dados = JSON.parse(texto); } catch (e) { dados = null; }
   var m = (dados && dados.mensagem) ? dados.mensagem : (texto || ('HTTP ' + r.status));
   // 401 aqui quase sempre significa chave de FUNCAO em vez de chave de HOST:
-  // a de funcao abre o status e recusa cadastro e PIN.
+  // a de funcao abre o status e recusa cadastro e remocao.
   if (r.status === 401) { m = 'Nao autorizado (401). Esta chave provavelmente e a da funcao VerStatus, que abre so o status. Use a chave de HOST da Function App.'; }
   return { status: r.status, ok: r.ok, mensagem: m };
 }
@@ -279,21 +268,11 @@ async function operar(acao) {
     return;
   }
 
-  el('gPin').innerHTML = '';
   gMsg('Executando...', 's-aviso');
   try {
-    var res;
-    if (acao === 'definirpin') {
-      var pin = pinAleatorio();
-      res = await chamarAdmin('/definirpin', { Celular: cel, Pin: pin });
-      if (res.ok) {
-        el('gPin').innerHTML = '<div class="aviso-item s-aviso"><strong>PIN do numero terminado em ' + fim +
-          ': ' + pin + '</strong><br>Anote e entregue ao colaborador. Nao sera exibido de novo. ' +
-          'Nao deixe esta tela visivel em gravacao de video.</div>';
-      }
-    } else {
-      res = await chamarAdmin('/gerenciarcolaborador', { Acao: acao, Celular: cel });
-    }
+    // Incremento 8B: o painel faz apenas cadastrar e remover. Cadastrar a chave do
+    // autenticador exibiria em tela um segredo que so e mostrado uma vez.
+    var res = await chamarAdmin('/gerenciarcolaborador', { Acao: acao, Celular: cel });
     gMsg(res.mensagem + ' (HTTP ' + res.status + ')', res.ok ? 's-ok' : 's-erro');
     if (res.ok) { el('gCelular').value = ''; await carregar(); }
   } catch (e) {
@@ -302,7 +281,6 @@ async function operar(acao) {
 }
 
 el('btCadastrar').addEventListener('click', function () { operar('cadastrar'); });
-el('btPin').addEventListener('click', function () { operar('definirpin'); });
 el('btRemover').addEventListener('click', function () { operar('remover'); });
 el('btEntrar').addEventListener('click', carregar);
 el('btAtualizar').addEventListener('click', carregar);

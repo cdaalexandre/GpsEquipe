@@ -1142,6 +1142,7 @@ New-Object System.Security.Cryptography.HMACSHA256(,$bytes) — a virgula a esqu
 e obrigatoria, senao o PS espalha os 32 bytes em 32 parametros e o construtor nao
 casa. E -MaximumRedirection 0 levanta excecao sem objeto Response: para ler um 302
 foi preciso [Net.HttpWebRequest] cru.
+
 ====
   FIM DAS ANOTAÇÕES — v2 (projeto completo)
 ================================================================================

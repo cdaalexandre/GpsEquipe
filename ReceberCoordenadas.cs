@@ -24,11 +24,11 @@ public class ReceberCoordenadas
         _logger = logger;
     }
 
-    // Formato do JSON enviado pelo index.html. Incremento 5 acrescentou o Pin.
+    // Formato do JSON enviado pelo index-totp.html.
+    // Incremento 8B: o campo Pin saiu. Token e a UNICA identificacao aceita.
     public class CoordenadaRecebida
     {
         public string? Celular { get; set; }
-        public string? Pin { get; set; }
         // Incremento 7c: token de sessao emitido pelo IniciarSessao.
         public string? Token { get; set; }
         public double Latitude { get; set; }
@@ -63,44 +63,28 @@ public class ReceberCoordenadas
             return new BadRequestObjectResult("Campo Celular e obrigatorio.");
         }
 
-        // Incremento 5: PIN ausente ja falha como identificacao, nao como
-        // erro de formato - para nao distinguir "faltou PIN" de "PIN errado".
-        // Incremento 7c: o token de sessao tem PRECEDENCIA sobre o PIN. Com token
-        // valido o PIN nao e exigido. Enquanto os dois convivem, a seguranca real
-        // e a do mais fraco: o PIN sai num passo proprio, depois da gravacao.
-        var porToken = false;
-        var celularToken = string.Empty;
-        long carimboToken = 0;
-        if (!string.IsNullOrWhiteSpace(dados.Token))
+        // Incremento 8B: token AUSENTE agora e falha de identificacao, nao
+        // fallback para PIN. Enquanto o PIN existia, a seguranca efetiva era a do
+        // caminho mais fraco: 6 digitos, sem expiracao e sem limite de tentativa.
+        // Com o PIN extirpado, provar posse do aparelho passou a ser obrigatorio.
+        var chaveToken = SegurancaToken.LerChave(Environment.GetEnvironmentVariable("TokenChaveHmac"));
+        if (chaveToken.Length < 32)
         {
-            var chaveToken = SegurancaToken.LerChave(Environment.GetEnvironmentVariable("TokenChaveHmac"));
-            if (chaveToken.Length < 32)
-            {
-                _logger.LogError("App setting TokenChaveHmac ausente ou curta demais.");
-                return new StatusCodeResult(500);
-            }
-            if (!SegurancaToken.Validar(chaveToken, dados.Token, out celularToken, out carimboToken))
-            {
-                _logger.LogWarning("Token de sessao invalido ou expirado.");
-                return new ObjectResult(FalhaIdentificacao) { StatusCode = 403 };
-            }
-            porToken = true;
+            _logger.LogError("App setting TokenChaveHmac ausente ou curta demais.");
+            return new StatusCodeResult(500);
         }
-
-        if (!porToken && string.IsNullOrWhiteSpace(dados.Pin))
+        if (!SegurancaToken.Validar(chaveToken, dados.Token, out var celularToken, out var carimboToken))
         {
-            _logger.LogWarning("Envio sem PIN.");
+            _logger.LogWarning("Token de sessao ausente, invalido ou expirado.");
             return new ObjectResult(FalhaIdentificacao) { StatusCode = 403 };
         }
 
         // Normaliza para o formato da RowKey da v1: somente digitos, sem o "+".
         var celular = new string(dados.Celular.Where(char.IsDigit).ToArray());
 
-        // GetEntityIfExistsAsync devolve NullableResponse: testa-se HasValue.
-        // Foi o uso de GetEntityAsync aqui que gerou o CS0266 na v1.
         // O celular vai assinado dentro do token: token de um numero nao serve
         // para enviar posicao de outro.
-        if (porToken && celularToken != celular)
+        if (celularToken != celular)
         {
             _logger.LogWarning("Token de final {a} usado para enviar como final {b}.",
                 celularToken.Length >= 4 ? celularToken.Substring(celularToken.Length - 4) : "----",
@@ -108,6 +92,8 @@ public class ReceberCoordenadas
             return new ObjectResult(FalhaIdentificacao) { StatusCode = 403 };
         }
 
+        // GetEntityIfExistsAsync devolve NullableResponse: testa-se HasValue.
+        // Foi o uso de GetEntityAsync aqui que gerou o CS0266 na v1.
         var permitidos = new TableClient(conexao, "FuncionariosPermitidos");
         var consulta = await permitidos.GetEntityIfExistsAsync<FuncionarioPermitidoEntidade>("FUNCIONARIO", celular);
         if (!consulta.HasValue)
@@ -118,29 +104,13 @@ public class ReceberCoordenadas
 
         var funcionario = consulta.Value!;
 
-        // Falha fechada: cadastro sem PIN definido NAO envia.
         // Unica revogacao que este desenho permite: se o TOTP foi recadastrado
-        // depois da emissao, o carimbo muda e o token antigo morre. A leitura da
-        // linha ja acontecia para o PIN, entao a verificacao sai de graca.
-        if (porToken)
+        // depois da emissao, o carimbo muda e o token antigo morre.
+        var carimboAtual = funcionario.TotpDefinidoEm.HasValue ? funcionario.TotpDefinidoEm.Value.ToUnixTimeSeconds() : 0;
+        if (carimboAtual == 0 || carimboAtual != carimboToken)
         {
-            var carimboAtual = funcionario.TotpDefinidoEm.HasValue ? funcionario.TotpDefinidoEm.Value.ToUnixTimeSeconds() : 0;
-            if (carimboAtual == 0 || carimboAtual != carimboToken)
-            {
-                _logger.LogWarning("Token com carimbo de segredo antigo (final {q}).", celular.Substring(celular.Length - 4));
-                return new ObjectResult(FalhaIdentificacao) { StatusCode = 403 };
-            }
-        }
-
-        if (!porToken && (string.IsNullOrWhiteSpace(funcionario.PinSalt) || string.IsNullOrWhiteSpace(funcionario.PinHash)))
-        {
-            _logger.LogWarning("Celular {celular} cadastrado sem PIN definido.", celular);
-            return new ObjectResult(FalhaIdentificacao) { StatusCode = 403 };
-        }
-
-        if (!porToken && !SegurancaPin.Conferir(dados.Pin!.Trim(), funcionario.PinSalt, funcionario.PinHash))
-        {
-            _logger.LogWarning("PIN incorreto para {celular}.", celular);
+            _logger.LogWarning("Token com carimbo de segredo antigo (final {q}).",
+                celular.Length >= 4 ? celular.Substring(celular.Length - 4) : "----");
             return new ObjectResult(FalhaIdentificacao) { StatusCode = 403 };
         }
 

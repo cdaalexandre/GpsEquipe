@@ -13,8 +13,8 @@ using System.Threading.Tasks;
 namespace GpsEquipe;
 
 // Incremento 6: funcao ADMINISTRATIVA de cadastro. Cobre apenas cadastrar e
-// remover colaborador. O PIN continua a cargo do DefinirPin, que ja existe e ja
-// valida formato: reimplementar PBKDF2 aqui criaria duas fontes da mesma regra.
+// remover colaborador. A identificacao fica a cargo do DefinirTotp: manter a
+// geracao de segredo em um lugar so evita duas fontes da mesma regra.
 public class GerenciarColaborador
 {
     private readonly ILogger<GerenciarColaborador> _logger;
@@ -85,8 +85,8 @@ public class GerenciarColaborador
                     RowKey = celular
                 });
                 _logger.LogInformation("Colaborador cadastrado (final {Quatro}).", quatro);
-                // Falha fechada: sem PIN definido, o ReceberCoordenadas recusa com 403.
-                return Resposta(201, true, "Colaborador cadastrado. Defina o PIN antes do primeiro uso.");
+                // Falha fechada: sem identificacao definida, o ReceberCoordenadas recusa com 403.
+                return Resposta(201, true, "Colaborador cadastrado. Cadastre o autenticador antes do primeiro uso.");
             }
 
             if (acao == "remover")

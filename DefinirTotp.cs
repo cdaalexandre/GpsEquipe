@@ -16,8 +16,8 @@ namespace GpsEquipe;
 //                colaborador cadastrar no Microsoft Authenticator.
 //   conferir  -> valida um codigo do app, para provar a integracao. NAO consome
 //                o anti-replay, senao o primeiro login real falharia.
-// O PIN NAO e removido aqui: ele segue autorizando os envios ate o fluxo de
-// sessao (7c) entrar no ar.
+// Incremento 8B: o PIN foi extirpado do sistema. O segredo cadastrado aqui e
+// a UNICA identificacao aceita pelo ReceberCoordenadas.
 public class DefinirTotp
 {
     private readonly ILogger<DefinirTotp> _logger;

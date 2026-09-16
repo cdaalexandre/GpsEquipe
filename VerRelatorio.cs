@@ -65,7 +65,10 @@ public class VerRelatorio
                 Path = "/api/verrelatorio",
                 Expires = sessao.ExpiraEm
             });
-            return new RedirectResult("/api/verrelatorio", false);
+            // Incremento 8B: 303 See Other, nao 302. O 303 obriga o navegador a
+            // trocar POST por GET; o 302 deixa isso a cargo do costume dele.
+            req.HttpContext.Response.Headers["Location"] = "/api/verrelatorio";
+            return new StatusCodeResult(303);
         }
 
         // GET sem cookie valido: nao mostra dado nenhum, mostra a porta.
