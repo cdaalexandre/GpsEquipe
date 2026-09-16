@@ -129,7 +129,9 @@ function Confirmar($pergunta, $esperado) {
     Escrever ''
     Escrever $pergunta
     $r = Read-Host ("Para confirmar, digite exatamente: " + $esperado)
-    if ($r.Trim() -ne $esperado) { Escrever 'CANCELADO: confirmacao nao casou. Nada foi alterado.'; return $false }
+    # -cne, nao -ne: o -ne do PowerShell ignora maiusculas, e 'trocar' passava
+    # por 'TROCAR' numa guarda de operacao destrutiva.
+    if ($r.Trim() -cne $esperado) { Escrever 'CANCELADO: confirmacao nao casou. Nada foi alterado.'; return $false }
     return $true
 }
 
