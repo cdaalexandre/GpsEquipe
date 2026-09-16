@@ -115,7 +115,7 @@ public class DefinirTotp
                 }
                 // Anti-replay nao e consumido nesta acao: passa 0 em vez da
                 // ultima janela gravada, porque conferir e diagnostico, nao login.
-                var janela = SegurancaTotp.Validar(func.TotpSegredo, dados?.Codigo, 0);
+                var janela = SegurancaTotp.Validar(func.TotpSegredo, dados?.Codigo ?? string.Empty, 0);
                 if (janela < 0)
                 {
                     _logger.LogInformation("Codigo TOTP recusado (final {Quatro}).", quatro);
