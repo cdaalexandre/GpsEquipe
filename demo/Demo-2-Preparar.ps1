@@ -8,14 +8,16 @@
       .\Demo-2-Preparar.ps1                 # faz tudo
       .\Demo-2-Preparar.ps1 -SemSeedLgpd    # nao cria o registro antigo da cena LGPD
       .\Demo-2-Preparar.ps1 -SemPinNovo     # nao redefine o PIN (mantem o atual)
+      .\Demo-2-Preparar.ps1 -NovoTotp       # gera segredo TOTP novo (exige recadastrar o app)
 
     O que faz, em ordem:
       1  guarda de tenant
       2  inventario de recursos, functions, runtime
       3  garante o colaborador cadastrado
-      4  gera PIN novo de 6 digitos e grava via DefinirPin
-      5  teste ponta a ponta com faxina automatica do registro de teste
-      6  teste das falhas de identificacao (403 com texto unico)
+      4a confere o segredo TOTP; gera um novo com -NovoTotp
+      4b PLANO B: PIN novo de 6 digitos via DefinirPin, para o index.html antigo
+      5  teste ponta a ponta POR TOKEN, com faxina automatica do registro
+      6  falhas de identificacao nos DOIS endpoints (403 com texto unico)
       7  semente da cena LGPD: registro em particao antiga
       8  chave do relatorio -> arquivo local + clipboard (valor nunca no console)
       9  atalhos de cena em C:\demo-gpsequipe\cena.ps1
@@ -28,7 +30,8 @@
 [CmdletBinding()]
 param(
     [switch]$SemSeedLgpd,
-    [switch]$SemPinNovo
+    [switch]$SemPinNovo,
+    [switch]$NovoTotp
 )
 
 $ErrorActionPreference = 'Continue'
@@ -135,6 +138,40 @@ function Get-Linhas($tabela, $filtro) {
 
 # PIN de 6 digitos, sorteio criptografico com rejeicao (evita vies do modulo).
 # RandomNumberGenerator.GetInt32 e .NET Core 3+; o PS 5.1 roda sobre .NET Framework.
+# Incremento 7: TOTP calculado localmente, para o script abrir sessao sem
+# depender do celular. Mesmo algoritmo do SegurancaTotp.cs, conferido contra os
+# vetores da RFC 6238 antes de virar codigo.
+function ConvertFrom-Base32([string]$texto) {
+    $abc = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+    $bits = ''
+    foreach ($c in $texto.ToUpperInvariant().ToCharArray()) {
+        $i = $abc.IndexOf($c)
+        if ($i -ge 0) { $bits += [Convert]::ToString($i, 2).PadLeft(5, '0') }
+    }
+    $bytes = New-Object System.Collections.Generic.List[byte]
+    for ($p = 0; $p + 8 -le $bits.Length; $p += 8) { $bytes.Add([Convert]::ToByte($bits.Substring($p, 8), 2)) }
+    return $bytes.ToArray()
+}
+
+function Get-TotpCodigo([string]$segredoBase32) {
+    $s = ConvertFrom-Base32 $segredoBase32
+    $c = [long][Math]::Floor([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() / 30)
+    $b = [BitConverter]::GetBytes($c)
+    if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($b) }
+    $h = New-Object Security.Cryptography.HMACSHA1
+    $h.Key = $s
+    $hash = $h.ComputeHash($b)
+    $h.Dispose()
+    $o = $hash[$hash.Length - 1] -band 0x0f
+    $bin = (($hash[$o] -band 0x7f) -shl 24) -bor (($hash[$o + 1] -band 0xff) -shl 16) -bor (($hash[$o + 2] -band 0xff) -shl 8) -bor ($hash[$o + 3] -band 0xff)
+    return ($bin % 1000000).ToString('D6')
+}
+
+function Get-SegredoLocal([string]$caminho) {
+    if (-not (Test-Path $caminho)) { return $null }
+    return (Get-Content $caminho | Where-Object { $_ -match '^[A-Z2-7]{32}$' } | Select-Object -First 1)
+}
+
 function New-Pin {
     $rng = New-Object Security.Cryptography.RNGCryptoServiceProvider
     $digitos = @()
@@ -202,77 +239,155 @@ if (@($func).Count -eq 0) {
 Tabela (@($func) | Select-Object PartitionKey, RowKey, PinDefinidoEm)
 Marcar 'cadastro do colaborador' (@($func).Count -eq 1) $CEL
 
-# -------------------------------------------------------------- 4. PIN novo
+# ------------------------------------------------ 4a. TOTP (Authenticator)
 Escrever ''
-Escrever '--- 4. PIN ---'
+Escrever '--- 4a. TOTP (Microsoft Authenticator) ---'
+$ARQ_TOTP = Join-Path $PASTA ('totp-' + $CEL + '.txt')
+$temTotp = -not [string]::IsNullOrEmpty((@($func)[0].TotpSegredo))
+Escrever ('segredo na tabela : ' + $temTotp + ' | definido em: ' + (@($func)[0].TotpDefinidoEm))
+$segredoLocal = Get-SegredoLocal $ARQ_TOTP
+Escrever ('segredo em disco  : ' + $(if ($segredoLocal) { 'sim (' + $ARQ_TOTP + ')' } else { 'nao' }))
+
+if ($NovoTotp -or -not $temTotp) {
+    New-Item -ItemType Directory -Path $PASTA -Force | Out-Null
+    $kTotp = az functionapp function keys list --name $APP --resource-group $RG `
+               --function-name DefinirTotp --query default -o tsv 2>$null
+    if ([string]::IsNullOrWhiteSpace($kTotp)) {
+        Escrever 'FALHA: nao consegui ler a chave de DefinirTotp.'
+    } else {
+        $r = Invoke-Http -Uri ($API + '/definirtotp?code=' + $kTotp) -Metodo Post `
+               -Corpo (@{ Acao = 'cadastrar'; Celular = $CEL } | ConvertTo-Json -Compress)
+        $kTotp = $null
+        Escrever ('DefinirTotp cadastrar -> HTTP ' + $r.Status)
+        if ($r.Status -eq 201) {
+            $segredoLocal = ($r.Texto | ConvertFrom-Json).segredo
+            $txtTotp = @(
+                ('GpsEquipe - segredo TOTP de ' + $CEL),
+                ('gerado em: ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')),
+                '',
+                'Chave para o Microsoft Authenticator (inserir chave manualmente):',
+                $segredoLocal,
+                '',
+                'APAGUE a entrada GpsEquipe antiga no app antes de cadastrar esta.'
+            ) -join [Environment]::NewLine
+            [IO.File]::WriteAllText($ARQ_TOTP, $txtTotp, [Text.UTF8Encoding]::new($false))
+            Escrever ('segredo NOVO de ' + $segredoLocal.Length + ' caracteres gravado em ' + $ARQ_TOTP)
+            Escrever 'ATENCAO: recadastre a entrada GpsEquipe no Authenticator ANTES de gravar.'
+            $func = Get-Linhas $TB_FUNC ("RowKey eq '" + $CEL + "'")
+            $temTotp = $true
+        }
+    }
+}
+Marcar 'TOTP cadastrado' ($temTotp -and $null -ne $segredoLocal) ('tabela: ' + $temTotp + ', segredo em disco: ' + ($null -ne $segredoLocal))
+
+# --------------------------------- 4b. plano B: PIN do index.html antigo
+Escrever ''
+Escrever '--- 4b. PLANO B: PIN (index.html antigo, se o TOTP falhar na camera) ---'
+$ARQ_PIN = Join-Path $PASTA 'pin-colaborador.txt'
 $pin = $null
 if ($SemPinNovo) {
-    $temPin = (@($func)[0].PinDefinidoEm)
     Escrever 'PIN mantido por -SemPinNovo. Use o PIN que voce ja tem em maos.'
-    Marcar 'PIN definido' ([bool]$temPin) ('PinDefinidoEm: ' + $temPin)
+    Marcar 'plano B (PIN)' ([bool](@($func)[0].PinDefinidoEm)) ('PinDefinidoEm: ' + (@($func)[0].PinDefinidoEm))
 } else {
     $kDefinir = az functionapp function keys list --name $APP --resource-group $RG `
                   --function-name DefinirPin --query default -o tsv 2>$null
     if ([string]::IsNullOrWhiteSpace($kDefinir)) {
         Escrever 'FALHA: nao consegui ler a chave de DefinirPin.'
-        Marcar 'PIN definido' $false 'chave de DefinirPin nao lida'
+        Marcar 'plano B (PIN)' $false 'chave de DefinirPin nao lida'
     } else {
-        $pin  = New-Pin
-        $body = @{ Celular = $CEL; Pin = $pin } | ConvertTo-Json -Compress
-        $r    = Invoke-Http -Uri ($API + '/definirpin?code=' + $kDefinir) -Metodo Post -Corpo $body
-        Escrever ('DefinirPin -> HTTP ' + $r.Status + '  ' + $r.Texto)
+        $pin = New-Pin
+        $r = Invoke-Http -Uri ($API + '/definirpin?code=' + $kDefinir) -Metodo Post `
+               -Corpo (@{ Celular = $CEL; Pin = $pin } | ConvertTo-Json -Compress)
         $kDefinir = $null
+        Escrever ('DefinirPin -> HTTP ' + $r.Status + '  ' + $r.Texto)
+        New-Item -ItemType Directory -Path $PASTA -Force | Out-Null
+        $txtPin = @(
+            ('PIN do colaborador ' + $CEL + ': ' + $pin),
+            ('gerado em ' + (Get-Date -Format 'yyyy-MM-dd HH:mm')),
+            'Usado pelo index.html antigo, plano B da gravacao.'
+        ) -join [Environment]::NewLine
+        [IO.File]::WriteAllText($ARQ_PIN, $txtPin, [Text.UTF8Encoding]::new($false))
+        # Regressao do bug do Merge (16/09): gravar o PIN NAO pode apagar o TOTP.
         $func = Get-Linhas $TB_FUNC ("RowKey eq '" + $CEL + "'")
-        Tabela (@($func) | Select-Object RowKey, PinDefinidoEm)
-        Marcar 'PIN definido' ($r.Status -eq 200) ('PIN novo de 6 digitos gravado em ' + (@($func)[0].PinDefinidoEm))
+        $totpAindaLa = -not [string]::IsNullOrEmpty((@($func)[0].TotpSegredo))
+        Escrever ('TOTP sobreviveu ao DefinirPin? ' + $totpAindaLa + '  (regressao do bug do Merge)')
+        Marcar 'plano B (PIN)' (($r.Status -eq 200) -and $totpAindaLa) ('PIN gravado em ' + $ARQ_PIN)
     }
 }
 
-# ------------------------------------------------- 5. teste ponta a ponta
+# --------------------------------- 5. teste ponta a ponta por TOKEN
 Escrever ''
-Escrever '--- 5. TESTE PONTA A PONTA (com faxina do registro de teste) ---'
-if ($null -eq $pin) {
-    Escrever 'sem PIN nesta execucao; teste do caminho feliz nao roda.'
-    Marcar 'caminho feliz' $false 'sem PIN nesta execucao'
+Escrever '--- 5. TESTE PONTA A PONTA POR TOKEN (com faxina do registro) ---'
+$tokenTeste = $null
+if ($null -eq $segredoLocal) {
+    Escrever 'sem segredo em disco: nao consigo calcular codigo. Rode com -NovoTotp.'
+    Marcar 'caminho feliz (token)' $false 'sem segredo local para calcular o codigo'
 } else {
-    $hojePart = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
-    $antes    = @(Get-Linhas $TB_COORD ("PartitionKey eq '" + $hojePart + "'")) | Select-Object -ExpandProperty RowKey
-    $body     = @{ Celular = $CEL; Pin = $pin; Latitude = $LAT; Longitude = $LON } | ConvertTo-Json -Compress
-    $r        = Invoke-Http -Uri ($API + '/recebercoordenadas') -Metodo Post -Corpo $body
-    Escrever ('POST valido -> HTTP ' + $r.Status + '  ' + $r.Texto)
-    Start-Sleep -Seconds 3
-    $depois = @(Get-Linhas $TB_COORD ("PartitionKey eq '" + $hojePart + "'"))
-    $novos  = @($depois | Where-Object { $_.RowKey -notin $antes })
-    Escrever ('linhas novas: ' + $novos.Count + ' -> apagando para nao poluir a gravacao')
-    foreach ($n in $novos) {
-        az storage entity delete --account-name $STO --table-name $TB_COORD `
-            --partition-key $n.PartitionKey --row-key $n.RowKey --auth-mode key -o none 2>$null
+    $codigo = Get-TotpCodigo $segredoLocal
+    $rs = Invoke-Http -Uri ($API + '/iniciarsessao') -Metodo Post `
+            -Corpo (@{ Celular = $CEL; Codigo = $codigo } | ConvertTo-Json -Compress)
+    Escrever ('IniciarSessao -> HTTP ' + $rs.Status)
+    if ($rs.Status -ne 200) {
+        Escrever ('   corpo: ' + $rs.Texto)
+        Marcar 'caminho feliz (token)' $false ('IniciarSessao HTTP ' + $rs.Status)
+    } else {
+        $tokenTeste = ($rs.Texto | ConvertFrom-Json).token
+        Escrever ('token de ' + $tokenTeste.Length + ' caracteres obtido')
+        $hojePart = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
+        $antes = @(Get-Linhas $TB_COORD ("PartitionKey eq '" + $hojePart + "'")) | Select-Object -ExpandProperty RowKey
+        $r = Invoke-Http -Uri ($API + '/recebercoordenadas') -Metodo Post `
+               -Corpo (@{ Celular = $CEL; Token = $tokenTeste; Latitude = $LAT; Longitude = $LON } | ConvertTo-Json -Compress)
+        Escrever ('POST com token -> HTTP ' + $r.Status + '  ' + $r.Texto)
+        Start-Sleep -Seconds 3
+        $novos = @(Get-Linhas $TB_COORD ("PartitionKey eq '" + $hojePart + "'") | Where-Object { $_.RowKey -notin $antes })
+        Escrever ('linhas novas: ' + $novos.Count + ' -> apagando para nao poluir a gravacao')
+        foreach ($n in $novos) {
+            az storage entity delete --account-name $STO --table-name $TB_COORD `
+                --partition-key $n.PartitionKey --row-key $n.RowKey --auth-mode key -o none 2>$null
+        }
+        $restam = @(Get-Linhas $TB_COORD ("PartitionKey eq '" + $hojePart + "'")).Count
+        Escrever ('linhas na particao de hoje agora: ' + $restam)
+        Marcar 'caminho feliz (token)' (($r.Status -eq 200) -and ($novos.Count -ge 1)) 'sessao aberta e 1 registro gravado e removido'
+        Escrever 'ATENCAO: a janela de 30s deste codigo foi QUEIMADA pelo anti-replay.'
+        Escrever '         Espere o codigo trocar no Authenticator antes de usar o app.'
     }
-    $restam = @(Get-Linhas $TB_COORD ("PartitionKey eq '" + $hojePart + "'")).Count
-    Escrever ('linhas na particao de hoje agora: ' + $restam)
-    Marcar 'caminho feliz' (($r.Status -eq 200) -and ($novos.Count -ge 1)) ('HTTP ' + $r.Status + ', 1 registro gravado e removido')
 }
 
-# ------------------------------------------ 6. falhas de identificacao
+# --------------------------- 6. falhas de identificacao nos 2 endpoints
 Escrever ''
 Escrever '--- 6. FALHAS DE IDENTIFICACAO (esperado: 403 com texto identico) ---'
+$tokenFalso = 'aaaa.bbbb'
+if ($tokenTeste) {
+    $ultimo = $tokenTeste.Substring($tokenTeste.Length - 1)
+    $tokenFalso = $tokenTeste.Substring(0, $tokenTeste.Length - 1) + $(if ($ultimo -eq 'A') { 'B' } else { 'A' })
+}
 $casos = @(
-    @{ n = '1. PIN errado';           c = @{ Celular = $CEL;             Pin = '135791'; Latitude = $LAT; Longitude = $LON } },
-    @{ n = '2. Numero fora da lista'; c = @{ Celular = '5511900000000';  Pin = '135791'; Latitude = $LAT; Longitude = $LON } },
-    @{ n = '3. Sem PIN';              c = @{ Celular = $CEL;                             Latitude = $LAT; Longitude = $LON } }
+    @{ n = '1. codigo TOTP errado';   rota = 'iniciarsessao';      c = @{ Celular = $CEL; Codigo = '000001' } },
+    @{ n = '2. numero fora da lista'; rota = 'iniciarsessao';      c = @{ Celular = '5511900000000'; Codigo = '123456' } },
+    @{ n = '3. sem codigo';           rota = 'iniciarsessao';      c = @{ Celular = $CEL } },
+    @{ n = '4. token adulterado';     rota = 'recebercoordenadas'; c = @{ Celular = $CEL; Token = $tokenFalso; Latitude = $LAT; Longitude = $LON } },
+    @{ n = '5. sem token e sem PIN';  rota = 'recebercoordenadas'; c = @{ Celular = $CEL; Latitude = $LAT; Longitude = $LON } },
+    @{ n = '6. PIN errado';           rota = 'recebercoordenadas'; c = @{ Celular = $CEL; Pin = '135791'; Latitude = $LAT; Longitude = $LON } }
 )
 $textos = @()
 foreach ($k in $casos) {
-    $r = Invoke-Http -Uri ($API + '/recebercoordenadas') -Metodo Post -Corpo ($k.c | ConvertTo-Json -Compress)
-    Escrever (('{0,-26} -> {1}  [{2}]' -f $k.n, $r.Status, $r.Texto))
+    $r = Invoke-Http -Uri ($API + '/' + $k.rota) -Metodo Post -Corpo ($k.c | ConvertTo-Json -Compress)
+    Escrever (('{0,-24} {1,-20} -> {2}  [{3}]' -f $k.n, $k.rota, $r.Status, $r.Texto))
     $textos += ('' + $r.Status + '|' + $r.Texto)
 }
 $unico = (@($textos | Select-Object -Unique).Count -eq 1)
-# Tres textos VAZIOS tambem seriam "resposta unica". Exigir corpo legivel,
-# senao a Cena 4 grava um 403 sem mensagem na tela.
-$comTexto = (@($textos | Where-Object { $_ -match '\|\S' }).Count -eq 3)
-Marcar 'falha fechada (cena 4)' ($unico -and $comTexto -and $textos[0] -like '403*') ('3 casos, resposta unica: ' + $unico + ', com texto: ' + $comTexto)
+# Textos VAZIOS tambem seriam "resposta unica". Exigir corpo legivel, senao a
+# Cena 4 grava um 403 sem mensagem na tela.
+$comTexto = (@($textos | Where-Object { $_ -match '\|\S' }).Count -eq $textos.Count)
+Marcar 'falha fechada (cena 4)' ($unico -and $comTexto -and $textos[0] -like '403*') ($textos.Count.ToString() + ' casos em 2 endpoints, resposta unica: ' + $unico + ', com texto: ' + $comTexto)
 
+if ($tokenTeste) {
+    $r = Invoke-Http -Uri ($API + '/recebercoordenadas') -Metodo Post `
+           -Corpo (@{ Celular = '5511900000002'; Token = $tokenTeste; Latitude = $LAT; Longitude = $LON } | ConvertTo-Json -Compress)
+    Escrever (('{0,-24} {1,-20} -> {2}  [{3}]' -f '7. token de outro numero', 'recebercoordenadas', $r.Status, $r.Texto))
+    Marcar 'celular amarrado ao token' ($r.Status -eq 403) 'token de um numero recusado para outro'
+}
+$tokenTeste = $null
 # --------------------------------------------------- 7. semente da cena LGPD
 Escrever ''
 Escrever '--- 7. SEMENTE DA CENA LGPD ---'
@@ -334,6 +449,8 @@ $ADMIN     = '__ADMIN__'
 $RELATORIO = '__RELATORIO__'
 $STO = '__STO__'; $RG = '__RG__'; $APP = '__APP__'
 $PART_ANTIGA = '__PART__'
+$CEL         = '__CEL__'
+$TOKEN       = ''
 
 function Post-Coordenada($corpo) {
   try {
@@ -348,6 +465,25 @@ function Post-Coordenada($corpo) {
     $t = $sr.ReadToEnd(); $sr.Close()
     '{0}  {1}' -f [int]$resp.StatusCode, $t
   }
+}
+
+function Iniciar-Sessao($codigo) {
+  if (-not $codigo) { $codigo = (Read-Host 'codigo de 6 digitos do Authenticator').Trim() }
+  try {
+    $r = Invoke-WebRequest "$API/iniciarsessao" -Method Post -ContentType 'application/json' -Body ((@{ Celular = $CEL; Codigo = $codigo } | ConvertTo-Json -Compress)) -UseBasicParsing -TimeoutSec 90
+    $j = $r.Content | ConvertFrom-Json
+    $global:TOKEN = $j.token
+    'sessao aberta: HTTP {0} | token de {1} caracteres | expira {2}' -f [int]$r.StatusCode, $j.token.Length, $j.expiraEmUtc
+  } catch {
+    $resp = $_.Exception.Response
+    $t = [string]$_.ErrorDetails.Message
+    if ([string]::IsNullOrEmpty($t) -and $resp) { $sr = New-Object IO.StreamReader($resp.GetResponseStream()) ; $t = $sr.ReadToEnd() ; $sr.Close() }
+    'sessao recusada: {0}  {1}' -f $(if ($resp) { [int]$resp.StatusCode } else { 0 }), $t
+  }
+}
+
+function Enviar-Posicao {
+  Post-Coordenada @{ Celular = $CEL; Token = $TOKEN; Latitude = -23.5505; Longitude = -46.6333 }
 }
 
 function Ver-Antigos {
@@ -369,7 +505,8 @@ function Ver-LogLgpd {
 }
 
 function Abrir-Relatorio { Start-Process $RELATORIO }
-function Abrir-Site      { Start-Process $SITE }
+function Abrir-Site      { Start-Process ($SITE + 'index-totp.html') }
+function Abrir-Site-Pin  { Start-Process $SITE }
 '@
 $modelo = $modelo.Replace('__SITE__', $SITE).
                   Replace('__API__', $API).
@@ -378,11 +515,12 @@ $modelo = $modelo.Replace('__SITE__', $SITE).
                   Replace('__STO__', $STO).
                   Replace('__RG__', $RG).
                   Replace('__APP__', $APP).
-                  Replace('__PART__', $PART_LGPD)
+                  Replace('__PART__', $PART_LGPD).
+                  Replace('__CEL__', $CEL)
 [IO.File]::WriteAllText($ARQ_CENA, $modelo, [Text.UTF8Encoding]::new($false))
 Escrever ('gravado: ' + $ARQ_CENA)
 Escrever 'Na gravacao, carregue com:  . C:\demo-gpsequipe\cena.ps1'
-Marcar 'atalhos de cena' (Test-Path $ARQ_CENA) 'Post-Coordenada, Ver-Antigos, Disparar-Timer, Ver-LogLgpd'
+Marcar 'atalhos de cena' (Test-Path $ARQ_CENA) 'Iniciar-Sessao, Enviar-Posicao, Post-Coordenada, Ver-Antigos, Disparar-Timer, Ver-LogLgpd'
 
 # ------------------------------------- 10. aquecimento e verificacao final
 Escrever ''
@@ -418,7 +556,9 @@ if ($pendentes -eq 0) {
 }
 Escrever ''
 Escrever 'Antes de ligar a camera:'
-Escrever '  - abrir C:\demo-gpsequipe\segredos-demo.txt, decorar o PIN e FECHAR o arquivo'
+Escrever '  - abrir o Microsoft Authenticator na entrada GpsEquipe e deixar a mao'
+Escrever '  - se o segredo TOTP foi regerado agora, RECADASTRAR a entrada no app'
+Escrever '  - plano B: PIN em C:\demo-gpsequipe\pin-colaborador.txt, com o index.html antigo'
 Escrever '  - colar a URL do relatorio no navegador e salvar como favorito'
 Escrever '  - fechar local.settings.json e qualquer aba com connection string'
 Escrever '  - Clear-Host e fonte do terminal em 18 ou mais'
