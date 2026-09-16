@@ -35,4 +35,11 @@ public class FuncionarioPermitidoEntidade : ITableEntity
     public string PinSalt { get; set; } = string.Empty;
     public string PinHash { get; set; } = string.Empty;
     public DateTimeOffset? PinDefinidoEm { get; set; }
+
+    // Incremento 7: TOTP (RFC 6238). Diferente do PIN, o segredo NAO pode ser
+    // hash: o servidor precisa dele em claro para recalcular o codigo a cada
+    // janela de 30s. TotpUltimaJanela impede que o mesmo codigo seja reusado.
+    public string TotpSegredo { get; set; } = string.Empty;
+    public DateTimeOffset? TotpDefinidoEm { get; set; }
+    public long TotpUltimaJanela { get; set; }
 }
