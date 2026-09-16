@@ -436,6 +436,7 @@ No cartão **Gestao de colaboradores**, com o número em dígitos:
 Essa chave é exibida uma única vez. Tela de painel é o pior lugar para exibir
 segredo de uso único. Use `.\Admin.ps1 -Habilitar`, que faz o cadastro **e** a
 chave num passo.
+
 ## O cartao da chave de acesso do gestor
 
 Mostra onde a chave vive e quando foi trocada pela ultima vez.
