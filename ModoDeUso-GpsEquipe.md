@@ -1,16 +1,16 @@
 # GpsEquipe — Modo de uso
 
-Sistema de rastreamento de colaboradores em campo
+Sistema de rastreamento de colaboradores em campo.
 Diretoria de Ensino Centro Oeste - SEDUC/SP
 
-Atualizado em 16/09/2026 — Incremento 8A (acesso do gestor por tela) e
-Incremento 8B (PIN extirpado).
+Atualizado em 16/09/2026 — Incremento 8C: a chave do gestor saiu da configuração
+e passou a viver em tabela, como hash.
 
 ---
 
 # CARTÃO DE EMERGÊNCIA
 
-**Os três endereços:**
+## Os três endereços
 
 | Quem | Endereço |
 | --- | --- |
@@ -18,7 +18,9 @@ Incremento 8B (PIN extirpado).
 | Gestor | https://gpsequipe-app-bad1.azurewebsites.net/api/verrelatorio |
 | Administrador | https://gpsequipebad1.z15.web.core.windows.net/admin.html |
 
-**O que cada um precisa ter em mão:**
+Os três são públicos. Nenhum mostra dado nenhum sem identificação.
+
+## O que cada um precisa ter em mão
 
 | Quem | Precisa de | Onde consegue |
 | --- | --- | --- |
@@ -26,32 +28,53 @@ Incremento 8B (PIN extirpado).
 | Gestor | a chave de acesso, 43 caracteres | do administrador |
 | Administrador | o `Admin.ps1` e login no Azure | o script está no repositório |
 
-Os três endereços são públicos. Nenhum mostra dado nenhum sem identificação.
+## Detalhe do endereço do colaborador
 
 O endereço `index-totp.html` também responde e serve exatamente a mesma página
-da raiz. Use a raiz: é mais curta e é a que está na documentação.
+da raiz.
+
+Use a raiz: é mais curta e é a que está na documentação.
 
 ---
 
 # O QUE MUDOU NESTA VERSÃO
 
-**Três coisas. Leia se você já usava o sistema.**
+**Quatro coisas. Leia se você já usava o sistema.**
 
-**1. O PIN não existe mais.**
+## 1. O PIN não existe mais
+
 O site antigo pedia PIN de 6 dígitos. Foi desligado.
+
 O endereço dele continua funcionando, mas agora serve a página do autenticador.
+
 Quem tentar enviar posição sem o código do aplicativo recebe erro.
+
 O campo de PIN não é mais lido pelo servidor.
 
-**2. A chave do gestor saiu da URL.**
+## 2. A chave do gestor saiu da URL
+
 O relatório agora tem tela de entrada.
+
 Favorito antigo com `?code=...` ainda abre — mas mostra a tela, não o relatório.
+
 Refaça o favorito sem o `?code=`.
 
-**3. A administração virou um script só.**
+## 3. A administração virou um script só
+
 Antes eram quatro blocos de comando para habilitar um colaborador.
+
 Agora é `.\Admin.ps1 -Habilitar <numero>`.
+
 Os comandos antigos continuam no apêndice, no fim deste documento.
+
+## 4. A chave do gestor não pode mais ser lida
+
+Ela vive na tabela `Configuracao`, guardada como hash.
+
+Nem o servidor recupera o valor. Perdida, resta trocar.
+
+Em compensação, a troca deixou de reiniciar a aplicação, e passou a ser possível
+pelo painel no navegador.
 
 ---
 
@@ -123,24 +146,36 @@ sistema não aceita envio.
 | GPS indisponivel | o aparelho não obteve a posição |
 | Sem conexao com a API | falha de rede; tenta de novo no próximo ciclo |
 
-**Por que a mensagem de erro é sempre a mesma?** De propósito.
+## Por que a mensagem de erro é sempre a mesma
+
+De propósito.
 
 Mensagens distintas deixariam qualquer pessoa descobrir, número por número, quem
-é colaborador da Diretoria. O motivo real fica no log, que só o administrador lê.
+é colaborador da Diretoria.
+
+O motivo real fica no log, que só o administrador lê.
 
 ## Cuidados
 
+**Sobre o cadastro:**
+
 - Seu número precisa estar cadastrado **e** ter a chave do autenticador
   cadastrada. Sem uma das duas, o sistema recusa.
+- **Trocou de celular?** A chave precisa ser cadastrada de novo no aparelho novo.
+  Não tem mais a chave? O administrador gera outra, e a antiga para de funcionar.
+
+**Sobre o segredo:**
+
 - Não mostre a tela do Authenticator a ninguém.
 - Não repasse a chave de 32 caracteres. Ela é o que garante que a coordenada
   gravada em seu nome foi enviada por você.
+
+**Sobre o envio:**
+
 - A página precisa ficar aberta e visível. Navegador fechado ou tela bloqueada
   por muito tempo pode interromper o envio.
 - Dentro de prédios o GPS perde precisão. Ao ar livre a posição é mais exata.
 - O consumo de dados é muito baixo — cada coordenada tem poucas centenas de bytes.
-- **Trocou de celular?** A chave precisa ser cadastrada de novo no aparelho novo.
-  Não tem mais a chave? O administrador gera outra, e a antiga para de funcionar.
 
 ## Seus dados
 
@@ -183,22 +218,28 @@ Passadas as 8 horas, ou ao limpar os dados do navegador, a tela de entrada volta
 A autorização fica num cookie que o JavaScript da página não consegue ler, e que
 só é enviado para o endereço do relatório.
 
+Tecnicamente: `HttpOnly`, `Secure` e `SameSite=Strict`, restrito ao caminho
+`/api/verrelatorio`.
+
 ⚠️ Ela **não identifica você**. Identifica apenas que alguém apresentou a chave
 correta.
 
 ## O que a página mostra
 
-**Mapa**, no topo.
-Cada colaborador recebe uma cor. Os pontos são as coordenadas recebidas, ligados
-por uma linha na ordem em que chegaram. O ponto maior e mais destacado é a
-posição mais recente de cada pessoa.
+| Parte | Onde | O que traz |
+| --- | --- | --- |
+| **Mapa** | no topo | uma cor por colaborador; pontos ligados por linha, na ordem em que chegaram |
+| **Legenda** | abaixo do mapa | número de pontos de cada colaborador |
+| **Tabela** | ao final | data, hora, latitude e longitude de cada envio |
 
-Toque ou clique num ponto: aparece colaborador, data, hora e coordenadas.
+**No mapa:** o ponto maior e mais destacado é a posição mais recente de cada
+pessoa. Toque ou clique num ponto e aparece colaborador, data, hora e
+coordenadas.
 
-**Legenda**, abaixo do mapa, com o número de pontos de cada colaborador.
+**Na tabela:** do mais recente para o mais antigo, agrupada por colaborador.
 
-**Tabela**, ao final, com data, hora, latitude e longitude de cada envio — do
-mais recente para o mais antigo, agrupada por colaborador.
+**O mapa** é desenhado com Leaflet sobre tiles do OpenStreetMap: sem chave de
+API e sem custo.
 
 ## Filtrar por período
 
@@ -256,7 +297,7 @@ Se não estiver logado no Azure:
 az login --tenant 38ae2f02-5710-4e12-80bb-83600c3fdf1e
 ```
 
-## Os cinco comandos
+## Os comandos
 
 | Comando | O que faz |
 | --- | --- |
@@ -277,6 +318,7 @@ script normaliza.
 | Não opera na conta errada | guarda de tenant no início; aborta fora do Azure for Students acadêmico |
 | Segredo não aparece na tela | chave e segredo saem pelo clipboard; no terminal aparece só o tamanho |
 | Não apaga por acidente | `-Remover`, `-Forcar` e `-TrocarChaveGestor` exigem confirmação digitada |
+| Confirmação exata | a palavra digitada diferencia maiúsculas: `trocar` não passa por `TROCAR` |
 | Não continua depois de falha | todo comando de escrita tem o exit code conferido |
 
 ---
@@ -309,7 +351,7 @@ Para gerar chave nova de propósito:
 .\Admin.ps1 -Habilitar 5511999998888 -Forcar
 ```
 
-⚠️ Isso invalida a chave antiga **e derrube as sessões abertas** daquele
+⚠️ Isso invalida a chave antiga **e derruba as sessões abertas** daquele
 colaborador. Ele precisa recadastrar no Authenticator.
 
 A confirmação pedida são os **quatro últimos dígitos** do celular.
@@ -341,6 +383,7 @@ Esta conferência **não consome** o código. É diagnóstico, não login.
 ```
 
 Remove a autorização e a chave do autenticador juntas.
+
 As coordenadas já enviadas **permanecem**.
 
 Confirmação: os quatro últimos dígitos do celular.
@@ -352,20 +395,26 @@ Confirmação: os quatro últimos dígitos do celular.
 A chave que o gestor digita fica na tabela `Configuracao`, guardada como
 **hash**. Tem 43 caracteres.
 
-⚠️ **Nao ha como ler a chave em uso.** O sistema guarda so o hash dela: nem o
+⚠️ **Não há como ler a chave em uso.** O sistema guarda só o hash dela: nem o
 servidor recupera o valor. Perdida, resta trocar.
 
 Isso muda a rotina: gestor novo na equipe obriga a trocar a chave para todos.
 
 ## Entregar a um gestor
 
-Nao existe comando de leitura. Ao trocar a chave, voce a recebe uma unica vez.
-Entregue naquele momento e guarde uma copia em local seguro.
+Não existe comando de leitura.
+
+Ao trocar a chave, você a recebe uma única vez. Entregue naquele momento e
+guarde uma cópia em local seguro.
 
 ## Trocar a chave
 
-Dois caminhos, mesmo efeito. Pelo painel, no cartao **Chave de acesso do
-gestor**: digite `TROCAR` no campo e clique no botao. Ou pelo terminal:
+Dois caminhos, mesmo efeito.
+
+**Pelo painel:** no cartão **Chave de acesso do gestor**, digite `TROCAR` no
+campo e clique no botão.
+
+**Pelo terminal:**
 
 ```powershell
 .\Admin.ps1 -TrocarChaveGestor
@@ -373,17 +422,17 @@ gestor**: digite `TROCAR` no campo e clique no botao. Ou pelo terminal:
 
 Nos dois casos a chave nova vai para o clipboard, nunca para a tela.
 
-⚠️ Uma unica chave serve a todos os gestores. Troca-la obriga todos a
-receberem a nova.
+⚠️ Uma única chave serve a todos os gestores. Trocá-la obriga todos a receberem
+a nova.
 
 ⚠️ A anterior para de funcionar imediatamente.
 
-⚠️ Sessoes ja abertas continuam valendo ate vencer, no maximo 8 horas.
+⚠️ Sessões já abertas continuam valendo até vencer, no máximo 8 horas.
 
-✔ **Nao reinicia a aplicacao.** Desde o Incremento 8C a escrita e na tabela,
-nao em app setting: nenhuma indisponibilidade.
+✔ **Não reinicia a aplicação.** Desde o Incremento 8C a escrita é na tabela, não
+em app setting: nenhuma indisponibilidade.
 
-Confirmacao: digitar a palavra `TROCAR`.
+Confirmação: digitar a palavra `TROCAR`, em maiúsculas.
 
 ---
 
@@ -393,6 +442,8 @@ Confirmacao: digitar a palavra `TROCAR`.
 
 O painel é a alternativa visual ao script, e mostra mais: coordenadas recebidas
 e o estado da rotina de LGPD, que o script não traz.
+
+## Entrar
 
 O painel pede uma **chave de acesso**. Use a **chave de host**.
 
@@ -422,7 +473,7 @@ gravada no navegador.
 O celular aparece sempre mascarado. O painel precisa identificar a linha, não
 precisa do número inteiro.
 
-## O que o painel faz
+## Cadastrar e remover colaborador
 
 No cartão **Gestao de colaboradores**, com o número em dígitos:
 
@@ -434,27 +485,28 @@ No cartão **Gestao de colaboradores**, com o número em dígitos:
 ⚠️ **O painel não cadastra a chave do Microsoft Authenticator, de propósito.**
 
 Essa chave é exibida uma única vez. Tela de painel é o pior lugar para exibir
-segredo de uso único. Use `.\Admin.ps1 -Habilitar`, que faz o cadastro **e** a
-chave num passo.
+segredo de uso único.
 
-## O cartao da chave de acesso do gestor
+Use `.\Admin.ps1 -Habilitar`, que faz o cadastro **e** a chave num passo.
 
-Mostra onde a chave vive e quando foi trocada pela ultima vez.
+## O cartão da chave de acesso do gestor
+
+Mostra onde a chave vive e quando foi trocada pela última vez.
 
 | Campo | O que diz |
 | --- | --- |
 | **Onde vive** | tabela `Configuracao` (hash), desde o Incremento 8C |
-| **Trocada em** | data e hora da ultima troca, em Brasilia |
+| **Trocada em** | data e hora da última troca, em Brasília |
 
 Para trocar: digite `TROCAR` no campo, clique em **Trocar chave** e confirme o
-alerta. O botao so libera com a palavra exata.
+alerta. O botão só libera com a palavra exata.
 
-⚠️ A chave nova vai para a AREA DE TRANSFERENCIA, nao para a tela. Cole em
-local seguro ANTES de copiar qualquer outra coisa: ela nao e exibida de novo.
+⚠️ A chave nova vai para a área de transferência, não para a tela. Cole em local
+seguro **antes** de copiar qualquer outra coisa: ela não é exibida de novo.
 
 ⚠️ A anterior morre na hora. Todos os gestores precisam receber a nova.
 
-Se o navegador bloquear a area de transferencia, a chave aparece num campo de
+Se o navegador bloquear a área de transferência, a chave aparece num campo de
 texto, com aviso. Copie dali.
 
 ---
@@ -463,7 +515,7 @@ texto, com aviso. Copie dali.
 
 | Chave | Tamanho | Para quem | Abre | Usada onde |
 | --- | --- | --- | --- | --- |
-| **de acesso do gestor** (tabela `Configuracao`) | 43 | gestor | so o relatorio | digitada na tela de entrada |
+| **de acesso do gestor** (tabela `Configuracao`) | 43 | gestor | só o relatório | digitada na tela de entrada |
 | **de host** | 56 | administrador | painel, status, cadastro, remoção e TOTP | colada no campo do painel |
 | **de função** do `VerStatus` | 56 | ninguém, na prática | só a leitura de status | não usada pelo painel |
 
@@ -474,7 +526,7 @@ O `Admin.ps1` lê a chave de host sozinho. Você só precisa dela para o painel.
 
 ✔ **A chave de host abre:** painel, cadastro, remoção, TOTP e status.
 
-✘ **A chave de host NÃO abre mais:** o relatório.
+✘ **A chave de host NÃO abre:** o relatório.
 
 Antes do Incremento 8A ela abria — o que significava que quem administrava
 também via a localização da equipe. Agora as duas funções estão separadas por
@@ -507,34 +559,53 @@ O critério é a finalidade, não o formato.
 
 ## O que é guardado, e o que não é
 
-| Dado | Guardado? |
-| --- | --- |
-| Chave do Microsoft Authenticator | **Sim**, em claro. O servidor precisa dela para recalcular o código a cada 30 segundos. Está nas limitações conhecidas |
-| Dados do antigo PIN | **Não.** Eliminados no Incremento 8B, não apenas ignorados pelo código |
+| Dado | Guardado? | Por quê |
+| --- | --- | --- |
+| Chave do Microsoft Authenticator | **Sim**, em claro | o servidor precisa dela para recalcular o código a cada 30 segundos. Está nas limitações conhecidas |
+| Chave de acesso do gestor | **Sim**, como hash | o servidor só precisa comparar o que foi digitado |
+| Dados do antigo PIN | **Não** | eliminados no Incremento 8B, não apenas ignorados pelo código |
 
 ---
 
 # PROBLEMAS COMUNS
 
+## No site do colaborador
+
 | Sintoma | Causa provável | O que fazer |
 | --- | --- | --- |
-| Site mostra "Informe o codigo de 6 digitos" | campo vazio ou incompleto | digitar o código completo |
-| Site mostra "Identificacao invalida" | número não autorizado, sem autenticador cadastrado, código errado, ou código já usado | esperar o código trocar e tentar de novo; se persistir, rodar `.\Admin.ps1` e conferir a lista |
+| "Informe o codigo de 6 digitos" | campo vazio ou incompleto | digitar o código completo |
+| "Identificacao invalida" | número não autorizado, sem autenticador, código errado ou já usado | esperar o código trocar e tentar de novo; se persistir, rodar `.\Admin.ps1` e conferir a lista |
 | Código correto e ainda assim recusado | o mesmo código já foi usado nesta janela de 30 segundos | esperar o próximo código |
 | Códigos nunca funcionam, desde o início | relógio do celular desajustado, ou chave cadastrada errada | ativar data e hora automáticas; rodar `.\Admin.ps1 -Conferir <numero>` |
-| Colaborador recém-cadastrado não consegue enviar | cadastro feito, autenticador não cadastrado | `.\Admin.ps1 -Habilitar <numero>` |
+| Recém-cadastrado não consegue enviar | cadastro feito, autenticador não cadastrado | `.\Admin.ps1 -Habilitar <numero>` |
 | Trocou de celular e não envia mais | a chave ficou no aparelho antigo | `.\Admin.ps1 -Habilitar <numero> -Forcar` |
-| `Admin.ps1` não executa | política de execução travada por GPO | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force` |
-| `Admin.ps1` aborta com "conta errada" | login em outro tenant | `az logout` e `az login --tenant 38ae2f02-...` |
-| Favorito antigo do relatório abre a tela de entrada | comportamento esperado desde o Incremento 8A | digitar a chave e refazer o favorito sem o `?code=` |
-| Relatorio mostra "Chave invalida" | chave errada, ou a chave de host em vez da do gestor | nao ha como reler a chave: se ninguem tiver a atual, `.\Admin.ps1 -TrocarChaveGestor` |
-| Relatório volta a pedir a chave | a sessão de 8 horas venceu, ou os dados do navegador foram limpos | digitar a chave de novo |
-| Painel devolve 401 nos botões | chave do gestor ou de função em vez da chave de host | usar a chave de host |
+
+## No relatório do gestor
+
+| Sintoma | Causa provável | O que fazer |
+| --- | --- | --- |
+| Favorito antigo abre a tela de entrada | comportamento esperado desde o Incremento 8A | digitar a chave e refazer o favorito sem o `?code=` |
+| "Chave invalida" | chave errada, ou a chave de host em vez da do gestor | não há como reler a chave: se ninguém tiver a atual, `.\Admin.ps1 -TrocarChaveGestor` |
+| Volta a pedir a chave | a sessão de 8 horas venceu, ou os dados do navegador foram limpos | digitar a chave de novo |
 | Relatório vazio | não há envios no período filtrado | clicar em **hoje** ou ampliar o intervalo |
 | Mapa em branco, tabela preenchida | falha ao carregar a biblioteca do mapa | recarregar a página; verificar a conexão |
+
+## No painel e no script
+
+| Sintoma | Causa provável | O que fazer |
+| --- | --- | --- |
+| Painel devolve 401 nos botões | chave do gestor ou de função em vez da chave de host | usar a chave de host |
+| Painel sem os botões de gestão | versão em cache no navegador | recarregar com Ctrl+F5 |
+| `Admin.ps1` não executa | política de execução travada por GPO | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force` |
+| `Admin.ps1` aborta com "conta errada" | login em outro tenant | `az logout` e `az login --tenant 38ae2f02-...` |
+| Confirmação não é aceita | a palavra foi digitada em minúsculas | digitar exatamente como pedido, em maiúsculas |
+
+## Em qualquer tela
+
+| Sintoma | Causa provável | O que fazer |
+| --- | --- | --- |
 | Primeiro acesso muito lento | o serviço estava inativo e precisa iniciar | aguardar alguns segundos e repetir |
 | Pontos empilhados no mesmo lugar | colaborador parado | normal; o trajeto aparece com deslocamento |
-| Painel sem os botões de gestão | versão em cache no navegador | recarregar com Ctrl+F5 |
 
 ---
 
@@ -556,6 +627,7 @@ público.
 ## O que continua em aberto
 
 **1. Sessão não pode ser revogada de imediato.**
+
 Ela se verifica sozinha, sem consulta a banco, e vale até vencer — no máximo 8
 horas. Vale para as duas: colaborador e gestor.
 
@@ -563,17 +635,22 @@ horas. Vale para as duas: colaborador e gestor.
   -Forcar`. Invalida todas as sessões dele na hora.
 - Para cortar a de um **gestor** antes: não há como. Só esperar vencer.
 
-**2. A chave do autenticador é guardada no sistema.**
-Não pode ser transformada em hash, porque o servidor precisa do valor original
-para recalcular o código. Cifrá-la com chave guardada fora do armazenamento é
-melhoria planejada.
+**2. A chave do autenticador é guardada em claro.**
 
-**3. A chave do gestor e unica para todos os gestores.**
-Nao identifica quem entrou, e troca-la obriga todos a receberem a nova. Desde o
-Incremento 8C ela e guardada como hash: nao ha como rele-la, entao gestor novo
-tambem obriga rotacao para todos.
+Não pode ser transformada em hash, porque o servidor precisa do valor original
+para recalcular o código.
+
+Cifrá-la com chave guardada fora do armazenamento é melhoria planejada.
+
+**3. A chave do gestor é única para todos os gestores.**
+
+Não identifica quem entrou, e trocá-la obriga todos a receberem a nova.
+
+Desde o Incremento 8C ela é guardada como hash: não há como relê-la, então
+gestor novo também obriga rotação para todos.
 
 **4. A proteção do relatório saiu da plataforma e entrou no código.**
+
 Antes do Incremento 8A, o Azure Functions recusava a requisição antes de o
 código do projeto rodar. Agora quem decide é a verificação de sessão escrita no
 projeto.
@@ -582,6 +659,7 @@ Troca assumida: o ganho foi tirar o segredo da URL; o custo é que uma falha
 nessa verificação abriria o relatório.
 
 **5. A autorização de sessão admite variação inofensiva.**
+
 Alterar o último caractere dela pode produzir um texto diferente que o servidor
 ainda aceita, porque aqueles bits não carregam informação.
 
@@ -597,8 +675,10 @@ Login corporativo com autenticação multifator da instituição — que diria
 
 # APÊNDICE — COMANDO A COMANDO
 
-**Use esta seção só se o `Admin.ps1` não estiver disponível.** Ela existe para
-que o sistema possa ser operado de outra máquina, ou depurado passo a passo.
+**Use esta seção só se o `Admin.ps1` não estiver disponível.**
+
+Ela existe para que o sistema possa ser operado de outra máquina, ou depurado
+passo a passo.
 
 São os mesmos comandos que o script executa por dentro.
 
@@ -713,17 +793,31 @@ az storage entity delete --account-name gpsequipebad1 `
 
 ## Obter a chave de acesso do gestor
 
-Nao existe. A tabela `Configuracao` guarda apenas o hash da chave. Para dar
-acesso a quem nao a tem, troque a chave e entregue a nova.
+Não existe.
+
+A tabela `Configuracao` guarda apenas o hash da chave. Para dar acesso a quem
+não a tem, troque a chave e entregue a nova.
 
 ## Trocar a chave de acesso do gestor
 
 ```powershell
-.\Admin.ps1 -TrocarChaveGestor
+& {
+  $chave = az functionapp keys list --name GpsEquipe-App-bad1 `
+    --resource-group GpsEquipe-RG --query "functionKeys.default" -o tsv
+  $corpo = @{ Acao = 'trocar'; Confirmacao = 'TROCAR' } | ConvertTo-Json -Compress
+  try {
+    $r = Invoke-WebRequest -Uri "https://gpsequipe-app-bad1.azurewebsites.net/api/gerenciarchavegestor?code=$chave" `
+      -Method Post -ContentType 'application/json' -Body $corpo -UseBasicParsing -TimeoutSec 90
+    $nova = ($r.Content | ConvertFrom-Json).chave
+    $nova | Set-Clipboard
+    Write-Output ("HTTP {0} -> chave de {1} caracteres no clipboard" -f [int]$r.StatusCode, $nova.Length)
+    Write-Output "Entregue aos gestores AGORA. Nao sera exibida de novo."
+    $nova = $null
+  } catch {
+    Write-Output ("FALHA HTTP {0}" -f $(if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }))
+  }
+  $chave = $null; $corpo = $null
+}
 ```
 
-O script chama a API, que grava o hash novo na tabela `Configuracao` e devolve
-a chave em claro uma unica vez. Nao reinicia a aplicacao.
-
-Pelo painel: cartao **Chave de acesso do gestor**, digitar `TROCAR` e clicar no
-botao. Mesmo efeito.
+A escrita é na tabela `Configuracao`. Não reinicia a aplicação.
