@@ -92,11 +92,12 @@ public class IniciarSessao
                 return Recusar("codigo invalido ou ja usado", quatro);
             }
 
-            await tabela.UpdateEntityAsync(new FuncionarioPermitidoEntidade
+            // Patch por DICIONARIO. Merge preserva apenas propriedade AUSENTE do
+            // payload; uma entidade parcial leva PinSalt, PinHash e TotpSegredo
+            // como string vazia (inicializadores da classe) e APAGA os valores reais.
+            await tabela.UpdateEntityAsync(new TableEntity(ParticaoFuncionario, celular)
             {
-                PartitionKey = ParticaoFuncionario,
-                RowKey = celular,
-                TotpUltimaJanela = janela
+                { "TotpUltimaJanela", janela }
             }, ETag.All, TableUpdateMode.Merge);
 
             var carimbo = func.TotpDefinidoEm.HasValue ? func.TotpDefinidoEm.Value.ToUnixTimeSeconds() : 0;

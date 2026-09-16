@@ -80,13 +80,12 @@ public class DefinirTotp
             if (acao == "cadastrar")
             {
                 var segredo = SegurancaTotp.GerarSegredoBase32();
-                await tabela.UpdateEntityAsync(new FuncionarioPermitidoEntidade
+                // Patch por DICIONARIO: nao arrasta PinSalt nem PinHash vazios.
+                await tabela.UpdateEntityAsync(new TableEntity(ParticaoFuncionario, celular)
                 {
-                    PartitionKey = ParticaoFuncionario,
-                    RowKey = celular,
-                    TotpSegredo = segredo,
-                    TotpDefinidoEm = DateTimeOffset.UtcNow,
-                    TotpUltimaJanela = 0
+                    { "TotpSegredo", segredo },
+                    { "TotpDefinidoEm", DateTimeOffset.UtcNow },
+                    { "TotpUltimaJanela", (long)0 }
                 }, ETag.All, TableUpdateMode.Merge);
 
                 _logger.LogInformation("Segredo TOTP gerado (final {Quatro}).", quatro);
