@@ -1,8 +1,8 @@
 #Requires -Version 5.1
 <#
     Demo-3-Encerrar.ps1  --  GpsEquipe v2
-    Fecha a gravacao: mata a chave que apareceu na barra de enderecos, apaga a
-    semente da cena LGPD e elimina os segredos que ficaram em disco.
+    Fecha a gravacao: mata os segredos que apareceram ou ficaram em disco, apaga
+    a semente da cena LGPD e elimina a pasta de segredos locais.
     Dois estagios: pre-visualizacao por padrao, execucao real com -Executar.
 
     Uso:
@@ -13,18 +13,31 @@
 
     O que faz com -Executar:
       1  apaga a semente da cena LGPD (exclusao nomeada)
-      2  rotaciona TRES chaves: funcao VerRelatorio, funcao VerStatus e a chave
-         de host (functionKeys). A masterKey nao entra, porque nunca e exibida.
-         (a Azure gera o valor novo;
-         o valor vem mascarado no resultado, logo nada sensivel vai ao console)
-      3  prova que a URL antiga morreu: espera HTTP 401
-      4  apaga C:\demo-gpsequipe (PIN e URL com chave)
+      2  rotaciona TRES segredos:
+           - app setting ChaveGestor : a chave que o gestor digita na tela
+           - funcao VerStatus        : foi gravada em disco antes da troca pela de host
+           - chave de HOST           : abre o painel administrativo
+         A masterKey nao entra, porque nunca e exibida e rotacionar quebraria o
+         disparo manual do Timer.
+         A chave de FUNCAO do VerRelatorio tambem nao entra: o Incremento 8A
+         tornou o VerRelatorio anonimo com cookie de sessao, e essa chave deixou
+         de abrir qualquer coisa.
+      3  prova que a ChaveGestor antiga morreu: POST com ela deve dar 401
+      4  apaga C:\demo-gpsequipe (segredo TOTP e chave do gestor)
       5  limpa o clipboard
       6  opcional: remove o app setting residual do diagnostico do 503
       7  imprime as linhas de registro para o Anotacoes-v2.txt
 
     NAO apaga as coordenadas gravadas durante a demonstracao: elas sao a evidencia
     real do funcionamento e ficam.
+
+    LIMITE CONHECIDO: rotacionar a ChaveGestor NAO encerra sessao de gestor ja
+    aberta. O cookie e assinado com o app setting TokenChaveHmac, nao com a
+    chave digitada, e vale ate 8 horas. Encerrar sessao aberta exigiria rotacionar
+    o TokenChaveHmac, o que tambem derrubaria a sessao dos colaboradores. Como o
+    cookie nunca aparece na barra de enderecos e o campo da tela e do tipo
+    password, a exposicao em video e muito menor que a do modelo antigo.
+
     Somente texto ASCII: PowerShell 5.1 le arquivo sem BOM como ANSI.
 #>
 [CmdletBinding()]
@@ -82,6 +95,25 @@ function Get-Status($uri) {
     }
 }
 
+# Incremento 8A: a porta do relatorio e um POST de formulario. SEM
+# -MaximumRedirection 0 de proposito: com a chave valida o 303 e seguido e o
+# resultado e 200; com a chave invalida vem 401. Assim a leitura e inequivoca.
+# (-MaximumRedirection 0 no PS 5.1 levanta excecao sem objeto Response e
+# devolveria 0, que nao distingue revogado de erro de rede.)
+function Test-ChaveGestor($chave) {
+    if ([string]::IsNullOrWhiteSpace($chave)) { return -1 }
+    $ses = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    try {
+        $r = Invoke-WebRequest -Uri ($API + '/verrelatorio') -Method Post `
+               -Body ('chave=' + $chave) -ContentType 'application/x-www-form-urlencoded' `
+               -WebSession $ses -UseBasicParsing -TimeoutSec 60
+        return [int]$r.StatusCode
+    } catch {
+        if ($_.Exception.Response) { return [int]$_.Exception.Response.StatusCode }
+        return 0
+    }
+}
+
 # ------------------------------------------------------------------ inicio
 Escrever '=================================================='
 Escrever ' Demo-3-Encerrar :: GpsEquipe v2'
@@ -92,13 +124,17 @@ Escrever ''
 
 if (-not (Test-Guarda)) { return }
 
-# URL antiga, lida do arquivo ANTES de qualquer exclusao. Valor nunca impresso.
-$urlAntiga = $null
+# Segredos antigos lidos do arquivo ANTES de qualquer exclusao ou rotacao.
+# Valores nunca impressos: so o tamanho.
+$chaveGestorAntiga = $null
 $chaveHostAntiga = $null
 if (Test-Path $ARQ_HOST) { $chaveHostAntiga = (Get-Content $ARQ_HOST -Raw).Trim() }
 if (Test-Path $ARQ_SEG) {
-    $linha = Get-Content $ARQ_SEG | Where-Object { $_ -like 'https://*verrelatorio?code=*' } | Select-Object -First 1
-    if ($linha) { $urlAntiga = $linha.Trim() }
+    # O Demo-2 grava a chave do gestor na linha seguinte ao rotulo. Ela e
+    # base64url de 32 bytes: 43 caracteres, sem '=' e sem espaco.
+    $chaveGestorAntiga = Get-Content $ARQ_SEG |
+        Where-Object { $_ -match '^[A-Za-z0-9_-]{43}$' } |
+        Select-Object -First 1
 }
 
 Escrever ''
@@ -111,13 +147,16 @@ Escrever ('semente LGPD na particao ' + $PART_LGPD + ': ' + @($seed).Count + ' l
 if (@($seed).Count -gt 0) { Tabela (@($seed) | Select-Object PartitionKey, RowKey, Celular) }
 if ($ManterSeedLgpd) { Escrever '  -> sera MANTIDA por -ManterSeedLgpd' }
 
-Escrever ('chaves a rotacionar em ' + $APP + ':')
-Escrever '  - funcao VerRelatorio (default)  : aparece na barra de enderecos do video'
+Escrever ('segredos a rotacionar em ' + $APP + ':')
+Escrever '  - app setting ChaveGestor        : chave que o gestor digita na tela'
 Escrever '  - funcao VerStatus (default)     : foi gravada em disco antes da troca pela de host'
 Escrever '  - chave de HOST (functionKeys)   : abre o painel e fica em arquivo local na gravacao'
 Escrever '  masterKey NAO entra: nunca foi exibida, e rotacionar quebraria o disparo do Timer.'
+Escrever '  chave de FUNCAO do VerRelatorio NAO entra: desde o Incremento 8A ela nao'
+Escrever '  abre mais o relatorio, que e anonimo com cookie de sessao.'
+Escrever '  AVISO: gravar app setting REINICIA a Function App (alguns segundos fora).'
+Escrever ('chave do gestor antiga localizada no arquivo local: ' + $(if ($chaveGestorAntiga) { 'sim, ' + $chaveGestorAntiga.Length + ' caracteres' } else { 'nao (a prova do 401 sera pulada)' }))
 Escrever ('chave de host antiga localizada no arquivo local: ' + $(if ($chaveHostAntiga) { 'sim' } else { 'nao (a prova do 401 dela sera pulada)' }))
-Escrever ('URL antiga localizada no arquivo local: ' + $(if ($urlAntiga) { 'sim' } else { 'nao (a prova do 401 sera pulada)' }))
 
 if (Test-Path $PASTA) {
     Escrever ('pasta de segredos a apagar: ' + $PASTA)
@@ -156,78 +195,106 @@ if ($ManterSeedLgpd) {
     Escrever ('linhas restantes na particao ' + $PART_LGPD + ': ' + $restou + ' (esperado 0)')
 }
 
-# ------------------------------------------------- 3. rotacionar a chave
+# ------------------------------------------------- 3. rotacionar os segredos
 Escrever ''
-Escrever '--- 3. ROTACAO DA CHAVE DE VerRelatorio ---'
-az functionapp function keys set --name $APP --resource-group $RG `
-    --function-name VerRelatorio --key-name default -o none 2>$null
-$codRot = $LASTEXITCODE
-Escrever ('rotacao funcao VerRelatorio exit: ' + $codRot)
-# Incremento 6: as chaves do painel administrativo tambem sao expostas na
-# gravacao, entao entram aqui. As falhas sao somadas em $codRot, que a mensagem
-# logo abaixo ja usa para avisar.
+Escrever '--- 3. ROTACAO DOS SEGREDOS ---'
+$codRot = 0
+
+# ChaveGestor: o valor novo e gerado AQUI, nao pela Azure. 32 bytes de
+# RandomNumberGenerator em base64url, o mesmo formato do valor original.
+# O valor vai de variavel direto para o comando: nunca passa pelo console.
+$bytes = New-Object byte[] 32
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes); $rng.Dispose()
+$nova = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_')
+$bytes = $null
+az functionapp config appsettings set --name $APP --resource-group $RG `
+    --settings "ChaveGestor=$nova" -o none 2>$null
+Escrever ('rotacao ChaveGestor exit        : ' + $LASTEXITCODE)
+$codRot = $codRot + $LASTEXITCODE
+if ($LASTEXITCODE -eq 0) {
+    $conf = az functionapp config appsettings list --name $APP --resource-group $RG `
+              --query "[?name=='ChaveGestor'].value | [0]" -o tsv 2>$null
+    Escrever ('chave nova gravada              : ' + $(if ($conf) { $conf.Length.ToString() + ' caracteres' } else { 'NAO CONFERIDA' }))
+    $igual = ($conf -eq $nova)
+    Escrever ('confere com a gerada            : ' + $igual)
+    $conf = $null
+}
+$nova | Set-Clipboard
+Escrever 'CHAVE NOVA do gestor no clipboard. Entregue ao gestor ANTES de limpar o clipboard.'
+$nova = $null
+
 az functionapp function keys set --name $APP --resource-group $RG --function-name VerStatus --key-name default -o none 2>$null
 Escrever ('rotacao funcao VerStatus exit   : ' + $LASTEXITCODE)
 $codRot = $codRot + $LASTEXITCODE
 az functionapp keys set --name $APP --resource-group $RG --key-type functionKeys --key-name default -o none 2>$null
 Escrever ('rotacao chave de HOST exit      : ' + $LASTEXITCODE)
 $codRot = $codRot + $LASTEXITCODE
-Escrever ('exit code da rotacao: ' + $codRot)
+Escrever ('soma dos exit codes da rotacao  : ' + $codRot)
 if ($codRot -ne 0) {
-    Escrever 'FALHA na rotacao. Confira a sintaxe da sua versao da CLI:'
+    Escrever 'FALHA em alguma rotacao. Confira a sintaxe da sua versao da CLI:'
     Escrever '  az functionapp function keys set --help'
-    Escrever 'A chave do video AINDA ESTA VALIDA. Resolva antes de entregar o video.'
-} else {
-    Escrever 'chave nova gerada pela Azure (valor mascarado no resultado, nada impresso aqui).'
+    Escrever '  az functionapp config appsettings set --help'
+    Escrever 'O SEGREDO DO VIDEO AINDA PODE ESTAR VALIDO. Resolva antes de entregar.'
 }
 
 # ------------------------------------------------- 4. provar a revogacao
 Escrever ''
-Escrever '--- 4. PROVA DA REVOGACAO (URL antiga deve dar 401) ---'
-if (-not $urlAntiga) {
-    Escrever 'URL antiga nao localizada; teste pulado. Confira manualmente pelo favorito do navegador.'
+Escrever '--- 4. PROVA DA REVOGACAO DA CHAVE DO GESTOR ---'
+if (-not $chaveGestorAntiga) {
+    Escrever 'chave antiga nao localizada em disco; teste pulado.'
+    Escrever 'Confira manualmente: abra o relatorio e tente entrar com a chave antiga.'
 } else {
+    # A troca de app setting reinicia o app: as primeiras tentativas podem falhar
+    # por indisponibilidade, nao por chave valida. Por isso o laco.
     $st = 0
-    for ($i = 1; $i -le 4; $i++) {
-        Start-Sleep -Seconds 10
-        $st = Get-Status $urlAntiga
-        Escrever ('tentativa ' + $i + ': HTTP ' + $st)
+    for ($i = 1; $i -le 5; $i++) {
+        Start-Sleep -Seconds 12
+        $st = Test-ChaveGestor $chaveGestorAntiga
+        Escrever ('tentativa ' + $i + ': HTTP ' + $st + ' (espera 401; 200 = AINDA VALIDA)')
         if ($st -eq 401) { break }
     }
     if ($st -eq 401) {
-        Escrever 'REVOGADA: a URL que aparece no video nao abre mais.'
+        Escrever 'REVOGADA: a chave que apareceu na gravacao nao entra mais.'
+    } elseif ($st -eq 200) {
+        Escrever 'ATENCAO: a chave antiga AINDA ABRE o relatorio. A rotacao nao pegou.'
     } else {
-        Escrever ('ATENCAO: a URL antiga ainda responde ' + $st + '. Repita o teste em alguns minutos.')
+        Escrever ('INCONCLUSIVO: HTTP ' + $st + '. Repita o teste em alguns minutos.')
     }
+    $chaveGestorAntiga = $null
 }
 
 # ------------------------------------------------- 5. apagar os segredos locais
 Escrever ''
 Escrever '--- 5. SEGREDOS EM DISCO ---'
 if (Test-Path $PASTA) {
+    Escrever 'AVISO: a chave NOVA do gestor esta no clipboard. Entregue antes de continuar.'
     Remove-Item -Path $PASTA -Recurse -Force
     Escrever ('apagada: ' + $PASTA + ' | ainda existe? ' + (Test-Path $PASTA))
 } else {
     Escrever 'nada a apagar.'
 }
-Set-Clipboard -Value ' '
-Escrever 'clipboard limpo.'
 
 # --- prova extra: a chave de HOST antiga tambem morreu? ---
 if ($chaveHostAntiga) {
     Escrever ''
     Escrever '--- 5b. A CHAVE DE HOST ANTIGA FOI REVOGADA? ---'
     $sh = 0
-    for ($j = 1; $j -le 3; $j++) {
+    for ($k = 1; $k -le 3; $k++) {
         Start-Sleep -Seconds 10
         $sh = Get-Status ($API + '/verstatus?code=' + $chaveHostAntiga)
-        Escrever ('tentativa ' + $j + ': HTTP ' + $sh + ' (espera 401)')
+        Escrever ('tentativa ' + $k + ': HTTP ' + $sh + ' (espera 401)')
         if ($sh -eq 401) { break }
     }
     if ($sh -eq 401) { Escrever 'REVOGADA: a chave de host do video nao abre mais o painel.' }
     else { Escrever ('ATENCAO: a chave de host antiga ainda responde ' + $sh + '. Repita em alguns minutos.') }
     $chaveHostAntiga = $null
 }
+
+Escrever ''
+Escrever '--- 5c. CLIPBOARD ---'
+Escrever 'A chave NOVA do gestor esta no clipboard. Se ja a entregou, limpe com:'
+Escrever '  Set-Clipboard -Value '' '''
 
 # ------------------------------------------------- 6. residuo de app setting
 if ($RemoverAppSettingResidual) {
@@ -239,7 +306,7 @@ if ($RemoverAppSettingResidual) {
     Start-Sleep -Seconds 20
     $nomes2 = az functionapp config appsettings list --name $APP --resource-group $RG --query "[].name" -o tsv 2>$null
     Escrever ('ainda presente? ' + (@($nomes2) -contains $RESIDUO))
-    $st2 = Get-Status 'https://gpsequipe-app-bad1.azurewebsites.net/api/verrelatorio'
+    $st2 = Get-Status ($API + '/verrelatorio')
     Escrever ('app respondendo apos o reinicio: HTTP ' + $st2 + ' (401 e o esperado, prova que o host subiu)')
 }
 
@@ -249,21 +316,27 @@ Escrever '=================================================='
 Escrever ' REGISTRO PARA O Anotacoes-v2.txt (copie as 3 linhas)'
 Escrever '=================================================='
 $hoje = Get-Date -Format 'yyyy-MM-dd'
-Escrever ('  GRAVACAO DA DEMONSTRACAO (' + $hoje + '): roteiro de 9 cenas executado com')
+Escrever ('  GRAVACAO DA DEMONSTRACAO (' + $hoje + '): roteiro executado com')
 Escrever ('    Demo-1-Limpar.ps1, Demo-2-Preparar.ps1 e Demo-3-Encerrar.ps1.')
-Escrever ('  Comandos efetivos: az resource list / az functionapp function list / POST recebercoordenadas')
-Escrever ('    (1 valido e 3 invalidos) / POST admin/functions/AnonimizarCoordenadas -> 202 / GET verrelatorio.')
-Escrever ('  Resultado: 403 com texto unico nos 3 casos, relatorio 401 sem chave e 200 com chave,')
-Escrever ('    anonimizacao comprovada ao vivo na particao ' + $PART_LGPD + ', chave default de VerRelatorio rotacionada')
-Escrever ('    apos a gravacao (exit ' + $codRot + ').')
+Escrever ('  Comandos efetivos: az resource list / az functionapp function list / POST iniciarsessao')
+Escrever ('    / POST recebercoordenadas (1 valido e 6 invalidos) / POST verrelatorio com a chave')
+Escrever ('    / POST admin/functions/AnonimizarCoordenadas.')
+Escrever ('  Resultado: 403 com texto unico em todos os casos invalidos, relatorio 401 sem sessao')
+Escrever ('    com a tela de entrada no corpo e 200 apos entrar com a chave, anonimizacao comprovada')
+Escrever ('    na particao ' + $PART_LGPD + ', e ChaveGestor, chave de VerStatus e chave de host')
+Escrever ('    rotacionadas apos a gravacao (soma dos exit codes: ' + $codRot + ').')
 Escrever ''
 Escrever 'CONFERENCIA DO VIDEO ANTES DE ENTREGAR:'
 Escrever '  [ ] nenhuma connection string, account key ou local.settings.json visivel'
-Escrever '  [ ] o PIN nao foi falado em voz alta nem apareceu em texto claro'
-Escrever '  [ ] a chave do relatorio ja foi rotacionada (passo 3 e 4 deste script)'
+Escrever '  [ ] a chave de acesso do gestor nao foi falada em voz alta nem apareceu em texto claro'
+Escrever '      (o campo da tela e do tipo password, mas o clipboard e o arquivo de segredos nao)'
+Escrever '  [ ] o segredo do Authenticator nao apareceu na tela'
+Escrever '  [ ] a ChaveGestor e a chave de host ja foram rotacionadas (passos 3, 4 e 5b)'
 Escrever '  [ ] nenhum recurso, caminho ou documento da PRODESP na tela'
-Escrever '  [ ] o audio pegou as cenas 4, 7 e 8'
+Escrever '  [ ] o audio pegou as cenas que valem nota'
 Escrever ''
-Escrever 'Para gravar de novo: rode Demo-1 e Demo-2 outra vez. O Demo-2 gera PIN e URL novos.'
+Escrever 'A URL do relatorio NAO e mais segredo: desde o Incremento 8A ela pode aparecer'
+Escrever 'na barra de enderecos sem risco. O segredo e a chave digitada na tela.'
+Escrever ''
+Escrever 'Para gravar de novo: rode Demo-1 e Demo-2 outra vez. O Demo-2 le as chaves novas.'
 Escrever 'Para entregar a chave ao gestor depois: consulte o ModoDeUso-GpsEquipe.md.'
-Escrever 'Para voltar a usar o painel: rode o Demo-2-Preparar.ps1, que le as chaves novas.'

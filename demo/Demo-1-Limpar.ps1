@@ -16,7 +16,8 @@
                    que e o que a cena do filtro por periodo precisa mostrar.
     Escopo Tudo  = tudo em Coordenadas. Video mais limpo, cena do filtro mais pobre.
 
-    Nunca toca FuncionariosPermitidos: cadastro e PIN sobrevivem.
+    Nunca toca FuncionariosPermitidos: cadastro e segredo do Authenticator
+    sobrevivem. O PIN foi extirpado no Incremento 8B.
     Nunca enumera resource groups. Toda exclusao e nomeada por PartitionKey/RowKey.
     Somente texto ASCII: PowerShell 5.1 le arquivo sem BOM como ANSI.
 #>
