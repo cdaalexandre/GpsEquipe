@@ -1143,6 +1143,67 @@ e obrigatoria, senao o PS espalha os 32 bytes em 32 parametros e o construtor na
 casa. E -MaximumRedirection 0 levanta excecao sem objeto Response: para ler um 302
 foi preciso [Net.HttpWebRequest] cru.
 
+--------------------------------------------------------------------------------
+  INCREMENTO 8B — PIN EXTIRPADO (2026-09-16)
+--------------------------------------------------------------------------------
+Motivo: com PIN e TOTP em paralelo, a seguranca efetiva era a do caminho mais
+fraco. O PIN eram 6 digitos, sem expiracao e sem limite de tentativa, num
+endpoint publico. Extirpado, provar posse do aparelho passou a ser obrigatorio.
+
+REMOVIDO DO REPO: DefinirPin.cs, SegurancaPin.cs, index.html (o do PIN).
+REMOVIDO DO CODIGO QUE FICOU:
+  ReceberCoordenadas.cs -> campo Pin fora do JSON; o ramo !porToken inteiro
+    desapareceu. Token ausente agora e 403, nao fallback para PIN.
+  Entidades.cs   -> PinSalt, PinHash, PinDefinidoEm fora da classe
+  VerStatus.cs   -> comPin/semPin/temPin viraram comTotp/semTotp/temTotp
+  admin.html     -> botao Definir PIN, pinAleatorio() e o ramo definirpin fora.
+    O painel NAO cadastra TOTP de proposito: a chave e exibida uma unica vez e
+    nao deve aparecer em tela de painel. Continua por bloco PowerShell.
+  Comentarios mentirosos corrigidos em DefinirTotp.cs e GerenciarColaborador.cs
+
+SITE LEGADO: o blob index.html foi SOBRESCRITO pelo conteudo do index-totp.html,
+nao apagado. Razao: staticWebsite.indexDocument = index.html, entao apagar
+deixaria a raiz do site em 404 e nao ha errorDocument configurado. Sobrescrever
+mata o PIN e faz o endereco curto servir a pagina do autenticador.
+
+TABELA: PinSalt, PinHash e PinDefinidoEm eliminados de 5511982253855.
+Merge NUNCA apaga propriedade: preserva o que o payload omite. Apagar exigiu
+Replace, e Replace com entidade incompleta apagaria TotpSegredo junto. O bloco
+releu a entidade e remontou o Replace com os campos de TOTP e sem os de PIN.
+E eliminacao, nao anonimizacao: a finalidade que justificava o dado terminou.
+
+ACEITES — verificados em 2026-09-16:
+  [x] POST /api/definirpin               -> 404 (funcao extinta)
+  [x] envio sem Token                    -> 403
+  [x] envio com Pin=123456 sem Token     -> 403 (o campo nao e mais lido)
+  [x] envio com Token valido             -> 200
+  [x] raiz do site                       -> 200, sem a palavra PIN no HTML
+  [x] VerStatus                          -> comTotp 1, semTotp 0, temTotp True
+  [x] POST da chave no relatorio         -> 303 SeeOther (era 302)
+  [x] registro real sem campos Pin* E envio por token ainda em 200
+
+LICOES DE FERRAMENTA:
+  - Propriedade tipada na CLI e chave@odata.type=Edm.Tipo, nao chave@tipo=valor.
+    Lido em az storage entity insert --help. Corrige a suposicao nao verificada
+    que estava no Roteiro de Demonstracao.
+  - O PS 5.1 REMOVE aspas duplas ao chamar executavel nativo. O etag
+    W/"datetime..." chegava como W/datetime... e o Azure recusava com
+    InvalidInput. Correcao: $etag.Replace('"','\"') antes do --if-match.
+  - O teste em registro descartavel pegou esse erro ANTES do registro real.
+  - No PS 5.1 a virgula tem precedencia MAIOR que a multiplicacao. Dentro de
+    @( ... ), a linha  '-' * 80, 'texto'  e lida como  '-' * @(80,'texto')  e
+    estoura InvalidArgument. Exige parenteses: ( '-' * 80 ).
+  - Conferencia tem de olhar o CONTEUDO, nao o veiculo. Duas vezes nesta rodada
+    um bloco afirmou sucesso lendo estado que nao havia mudado: os tres "True"
+    apos um replace falho, e o "gravado | UTF8 valido" apos uma insercao vazia.
+  - Bloco colado neste console: apenas ASCII no codigo. Acento vira [char]0xNN.
+  - [IO.File] resolve caminho relativo pelo diretorio do processo .NET, nao pelo
+    Set-Location do PowerShell. Sempre caminho absoluto.
+
+PENDENTE: ModoDeUso-GpsEquipe.md ainda descreve o site legado por PIN, dois
+enderecos de colaborador e o botao Definir PIN. Roteiro-Demonstracao tem a
+Cena 3 gravando PIN e o P2 pondo a chave na barra de enderecos. Ambos obsoletos.
+
 ====
   FIM DAS ANOTAÇÕES — v2 (projeto completo)
 ================================================================================
