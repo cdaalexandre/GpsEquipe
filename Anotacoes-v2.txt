@@ -40,7 +40,7 @@ Convenção: base "gpsequipe" + sufixo bad1 (últimos 4 do subscription id, como
  
   Resource Group:      GpsEquipe-RG
   Storage Account:     gpsequipebad1        (13 chars; regra: 3-24, só minúsculas e dígitos)
-  Tabelas:             Coordenadas, FuncionariosPermitidos
+  Tabelas:             Coordenadas, FuncionariosPermitidos, Configuracao
   Function App:        GpsEquipe-App-bad1
   Repositório GitHub:  cdaalexandre/GpsEquipe
   Pasta local:         C:\repo\GpsEquipe    (fora do OneDrive de propósito)
@@ -1218,3 +1218,71 @@ que envelhece mente com autoridade. O repositorio e a fonte unica.
 ================================================================================
   FIM DAS ANOTAÇÕES — v2 (projeto completo)
 ================================================================================
+
+================================================================
+SECAO 7 - INCREMENTO 8C: CHAVE DO GESTOR EM TABELA, COMO HASH
+================================================================
+Data: 16/09/2026. Commit ad3803c.
+
+ARQUIVOS
+  Novos:      ChaveGestorStore.cs (103 linhas), GerenciarChaveGestor.cs (117)
+  Alterados:  VerRelatorio.cs (313), admin.html (329), Admin.ps1 (323), .gitignore
+
+COMANDOS EFETIVOS
+  dotnet build --nologo -v minimal
+      -> exit 0, 0 erros. SDK 10.0.401, target net9.0
+  func azure functionapp publish GpsEquipe-App-bad1
+      -> exit 0, 8 funcoes; GerenciarChaveGestor no ar
+  az storage blob upload --account-name gpsequipebad1 --container-name $web
+      --name admin.html --overwrite --auth-mode key
+      -> 13871 para 17416 bytes
+  az functionapp config appsettings delete --name GpsEquipe-App-bad1
+      --resource-group GpsEquipe-RG --setting-names ChaveGestor
+      -> 11 para 10 settings
+
+RESULTADO OBTIDO
+  - Tabela Configuracao criada pela propria rotacao (CreateIfNotExistsAsync),
+    sem comando az.
+  - Primeira troca pelo painel em 16/09/2026 15:30:14, SEM restart.
+  - Aceite: chave nova HTTP 303 | chave antiga HTTP 401 | chave errada HTTP 401.
+  - Acao estado devolve emTabela:true depois do restart da remocao do setting.
+  - Rotacao tambem funciona por terminal: .\Admin.ps1 -TrocarChaveGestor.
+  - -ChaveGestor removido do script: a tabela guarda hash, o valor nao se le.
+
+DECISAO DE PROJETO
+  Gravar app setting e plano de GERENCIAMENTO e reinicia a Function App: a
+  requisicao que grava morre no restart. Tabela e plano de DADOS: sem restart.
+  Hash serve porque o servidor so COMPARA a chave digitada. O segredo TOTP
+  continua em claro porque precisa ser RECALCULADO a cada 30 segundos.
+  SHA-256 sem salt basta: a chave e sorteada, 32 bytes, nao ha dicionario a
+  percorrer. Salt e derivacao lenta servem contra senha humana.
+
+CUSTO
+  Zero. Tabela na conta Standard_LRS ja existente.
+
+REFLEXAO
+  A chave do gestor pode virar hash porque o servidor so precisa COMPARAR o
+  que foi digitado com o que esta guardado; o segredo do autenticador nao
+  pode, porque o servidor precisa RECALCULAR o codigo de seis digitos a cada
+  trinta segundos, e para isso o valor original e indispensavel. O que
+  impedia a troca pela tela nao era criptografia, era o lugar: gravar app
+  setting e operacao de gerenciamento e reinicia a aplicacao, entao a propria
+  requisicao que grava morre no restart e nunca chega a responder. Mudar o
+  armazenamento para Table Storage resolveu sem tocar em algoritmo nenhum,
+  porque escrita em tabela e operacao de dados, feita com a mesma credencial
+  que o codigo ja usava. Isso ADICIONA ao que o 8A decidiu: la eu tirei o
+  segredo da URL e passei a protecao da plataforma para o meu codigo, e aqui
+  tirei o segredo da configuracao e passei o governo dele para a aplicacao,
+  na mesma direcao. O custo foi assumido e e duplo: a dependencia do meu
+  codigo aumentou, ja que agora tambem a guarda da chave depende de
+  verificacao que eu escrevi, e nao ha mais como ler a chave vigente, de modo
+  que gestor novo obriga rotacao para todos. A Limitacao 3 do ModoDeUso
+  continua viva: a chave nao identifica quem entrou.
+
+PENDENCIAS ABERTAS
+  - SECAO 2: acrescentar Configuracao a lista de tabelas.
+  - ModoDeUso-GpsEquipe.md desatualizado em 4 pontos: as tres chaves; obter a
+    chave do gestor; trocar a chave; problemas comuns.
+  - Prompt do Read-Host sai como "TROCAR: TROCAR".
+  - Data de cadastro no Admin.ps1 aparece em UTC; o painel mostra Brasilia.
+  - Projeto em net9.0; fim de suporte em 09/11/2026. Migrar para net10.0.
