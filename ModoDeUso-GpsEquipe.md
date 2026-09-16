@@ -256,7 +256,7 @@ Se não estiver logado no Azure:
 az login --tenant 38ae2f02-5710-4e12-80bb-83600c3fdf1e
 ```
 
-## Os seis comandos
+## Os cinco comandos
 
 | Comando | O que faz |
 | --- | --- |
@@ -265,8 +265,7 @@ az login --tenant 38ae2f02-5710-4e12-80bb-83600c3fdf1e
 | `.\Admin.ps1 -Habilitar <numero> -Forcar` | regera a chave de quem já tem |
 | `.\Admin.ps1 -Conferir <numero>` | testa o código que o colaborador está vendo |
 | `.\Admin.ps1 -Remover <numero>` | remove, com confirmação |
-| `.\Admin.ps1 -ChaveGestor` | põe a chave do gestor no clipboard |
-| `.\Admin.ps1 -TrocarChaveGestor` | gera chave nova, com confirmação |
+| `.\Admin.ps1 -TrocarChaveGestor` | gera chave **nova** do gestor; a atual morre na hora |
 
 O número pode ir de qualquer jeito: `+55 11 98225-3855` ou `5511982253855`. O
 script normaliza.
@@ -350,33 +349,41 @@ Confirmação: os quatro últimos dígitos do celular.
 
 # ADMINISTRADOR — A CHAVE DO GESTOR
 
-A chave que o gestor digita é um app setting chamado `ChaveGestor`.
-Tem 43 caracteres.
+A chave que o gestor digita fica na tabela `Configuracao`, guardada como
+**hash**. Tem 43 caracteres.
+
+⚠️ **Nao ha como ler a chave em uso.** O sistema guarda so o hash dela: nem o
+servidor recupera o valor. Perdida, resta trocar.
+
+Isso muda a rotina: gestor novo na equipe obriga a trocar a chave para todos.
 
 ## Entregar a um gestor
 
-```powershell
-.\Admin.ps1 -ChaveGestor
-```
-
-⚠️ Entregue por canal privado. A chave **não identifica quem a usa**: qualquer
-pessoa que a tenha vê a localização de todos os colaboradores.
+Nao existe comando de leitura. Ao trocar a chave, voce a recebe uma unica vez.
+Entregue naquele momento e guarde uma copia em local seguro.
 
 ## Trocar a chave
+
+Dois caminhos, mesmo efeito. Pelo painel, no cartao **Chave de acesso do
+gestor**: digite `TROCAR` no campo e clique no botao. Ou pelo terminal:
 
 ```powershell
 .\Admin.ps1 -TrocarChaveGestor
 ```
 
-⚠️ Uma única chave serve a todos os gestores. Trocá-la obriga todos a receberem
-a nova.
+Nos dois casos a chave nova vai para o clipboard, nunca para a tela.
 
-⚠️ Sessões já abertas continuam valendo até vencer, no máximo 8 horas.
+⚠️ Uma unica chave serve a todos os gestores. Troca-la obriga todos a
+receberem a nova.
 
-⚠️ Gravar app setting **reinicia a aplicação**: alguns segundos de
-indisponibilidade.
+⚠️ A anterior para de funcionar imediatamente.
 
-Confirmação: digitar a palavra `TROCAR`.
+⚠️ Sessoes ja abertas continuam valendo ate vencer, no maximo 8 horas.
+
+✔ **Nao reinicia a aplicacao.** Desde o Incremento 8C a escrita e na tabela,
+nao em app setting: nenhuma indisponibilidade.
+
+Confirmacao: digitar a palavra `TROCAR`.
 
 ---
 
@@ -436,7 +443,7 @@ chave num passo.
 
 | Chave | Tamanho | Para quem | Abre | Usada onde |
 | --- | --- | --- | --- | --- |
-| **de acesso do gestor** (`ChaveGestor`) | 43 | gestor | só o relatório | digitada na tela de entrada |
+| **de acesso do gestor** (tabela `Configuracao`) | 43 | gestor | so o relatorio | digitada na tela de entrada |
 | **de host** | 56 | administrador | painel, status, cadastro, remoção e TOTP | colada no campo do painel |
 | **de função** do `VerStatus` | 56 | ninguém, na prática | só a leitura de status | não usada pelo painel |
 
@@ -500,7 +507,7 @@ O critério é a finalidade, não o formato.
 | `Admin.ps1` não executa | política de execução travada por GPO | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force` |
 | `Admin.ps1` aborta com "conta errada" | login em outro tenant | `az logout` e `az login --tenant 38ae2f02-...` |
 | Favorito antigo do relatório abre a tela de entrada | comportamento esperado desde o Incremento 8A | digitar a chave e refazer o favorito sem o `?code=` |
-| Relatório mostra "Chave invalida" | chave errada, ou a chave de host em vez da do gestor | `.\Admin.ps1 -ChaveGestor` |
+| Relatorio mostra "Chave invalida" | chave errada, ou a chave de host em vez da do gestor | nao ha como reler a chave: se ninguem tiver a atual, `.\Admin.ps1 -TrocarChaveGestor` |
 | Relatório volta a pedir a chave | a sessão de 8 horas venceu, ou os dados do navegador foram limpos | digitar a chave de novo |
 | Painel devolve 401 nos botões | chave do gestor ou de função em vez da chave de host | usar a chave de host |
 | Relatório vazio | não há envios no período filtrado | clicar em **hoje** ou ampliar o intervalo |
@@ -541,8 +548,10 @@ Não pode ser transformada em hash, porque o servidor precisa do valor original
 para recalcular o código. Cifrá-la com chave guardada fora do armazenamento é
 melhoria planejada.
 
-**3. A chave do gestor é única para todos os gestores.**
-Não identifica quem entrou, e trocá-la obriga todos a receberem a nova.
+**3. A chave do gestor e unica para todos os gestores.**
+Nao identifica quem entrou, e troca-la obriga todos a receberem a nova. Desde o
+Incremento 8C ela e guardada como hash: nao ha como rele-la, entao gestor novo
+tambem obriga rotacao para todos.
 
 **4. A proteção do relatório saiu da plataforma e entrou no código.**
 Antes do Incremento 8A, o Azure Functions recusava a requisição antes de o
@@ -680,30 +689,22 @@ Sem expor a chave:
 az storage entity delete --account-name gpsequipebad1 `
   --table-name FuncionariosPermitidos `
   --partition-key "FUNCIONARIO" --row-key "5511982253855" --auth-mode key
-```
-
 ## Obter a chave de acesso do gestor
 
-```powershell
-az functionapp config appsettings list --name GpsEquipe-App-bad1 `
-  --resource-group GpsEquipe-RG `
-  --query "[?name=='ChaveGestor'].value | [0]" -o tsv | Set-Clipboard
-```
+Nao existe. A tabela `Configuracao` guarda apenas o hash da chave. Para dar
+acesso a quem nao a tem, troque a chave e entregue a nova.
 
 ## Trocar a chave de acesso do gestor
 
 ```powershell
-& {
-  $c = az account show -o json | ConvertFrom-Json
-  if ($c.tenantId -ne '38ae2f02-5710-4e12-80bb-83600c3fdf1e') { Write-Output "ABORTADO"; return }
-  $b = New-Object byte[] 32
-  $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-  $rng.GetBytes($b); $rng.Dispose()
-  $v = [Convert]::ToBase64String($b).TrimEnd('=').Replace('+','-').Replace('/','_')
-  az functionapp config appsettings set --name GpsEquipe-App-bad1 `
-    --resource-group GpsEquipe-RG --settings "ChaveGestor=$v" -o none
-  if ($LASTEXITCODE -eq 0) { $v | Set-Clipboard; Write-Output "Chave nova no clipboard. Entregue aos gestores." }
-  else { Write-Output "FALHA ao gravar." }
-  $v = $null; $b = $null
+.\Admin.ps1 -TrocarChaveGestor
+```
+
+O script chama a API, que grava o hash novo na tabela `Configuracao` e devolve
+a chave em claro uma unica vez. Nao reinicia a aplicacao.
+
+Pelo painel: cartao **Chave de acesso do gestor**, digitar `TROCAR` e clicar no
+botao. Mesmo efeito.
+
 }
 ```
