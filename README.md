@@ -42,12 +42,14 @@ Azure Functions (isolated worker, .NET 9)
   ├── DefinirTotp            HTTP  chave    → gera o segredo do autenticador
   ├── GerenciarColaborador   HTTP  chave    → cadastra e remove colaborador
   ├── VerStatus              HTTP  chave    → estado do sistema em JSON
+  ├── GerenciarChaveGestor   HTTP  chave    → estado e rotação da chave do gestor
   └── AnonimizarCoordenadas  Timer          → anonimiza após 90 dias
   │
   ▼
 Azure Table Storage
   ├── Coordenadas             PartitionKey = data UTC, RowKey = GUID
-  └── FuncionariosPermitidos  PartitionKey = "FUNCIONARIO", RowKey = celular
+  ├── FuncionariosPermitidos  PartitionKey = "FUNCIONARIO", RowKey = celular
+  └── Configuracao            PartitionKey = "CONFIG", RowKey = "ChaveGestor" (hash)
 
 Azure Blob Storage ($web)
   ├── index.html        site do colaborador
@@ -80,6 +82,10 @@ Todos os recursos dentro da faixa gratuita do Azure for Students.
 | `AnonimizarCoordenadas.cs` | Timer trigger — anonimização LGPD |
 | `SegurancaToken.cs` | emissão e verificação dos tokens de sessão (HMAC-SHA256) |
 | `SegurancaTotp.cs` | cálculo do código TOTP (RFC 6238) |
+| `ChaveGestorStore.cs` | guarda, valida e rotaciona a chave do gestor (hash em tabela) |
+| `GerenciarChaveGestor.cs` | HTTP POST — estado e rotação da chave do gestor |
+| `Admin.ps1` | toda a operação administrativa num script só |
+| `Roteiro-Apresentacao.md` | roteiro da demonstração ao vivo |
 | `index-totp.html` | site do colaborador (captura de GPS) |
 | `admin.html` | painel administrativo |
 | `host.json` | configuração do host do Functions |
@@ -108,6 +114,7 @@ endereço serve a página do autenticador.
 | `/api/definirtotp` | POST | chave de função |
 | `/api/gerenciarcolaborador` | POST | chave de função |
 | `/api/verstatus` | GET | chave de função |
+| `/api/gerenciarchavegestor` | POST | chave de função |
 | `AnonimizarCoordenadas` | Timer | CRON `0 30 3 * * *` (3h30 UTC) |
 
 As três rotas anônimas não são abertas: a proteção delas está no código, não na
@@ -208,19 +215,23 @@ $cs = (az storage account show-connection-string --name gpsequipebad1 `
 az functionapp config appsettings set --name GpsEquipe-App-bad1 `
   --resource-group GpsEquipe-RG --settings "TabelaConnectionString=$cs" -o none
 
-# 7. Segredos da aplicação: chave HMAC dos tokens e chave de acesso do gestor.
+# 7. Segredo da aplicação: a chave HMAC que assina os tokens de sessão.
 #    Valores gerados localmente e gravados sem passar pelo console.
+#    A chave do gestor NÃO entra aqui: desde o Incremento 8C ela vive na tabela
+#    Configuracao, como hash, e nasce na primeira rotação.
 & {
   $b = New-Object byte[] 32
   $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-  $rng.GetBytes($b); $hmac = [Convert]::ToBase64String($b)
   $rng.GetBytes($b); $rng.Dispose()
-  $gestor = [Convert]::ToBase64String($b).TrimEnd('=').Replace('+','-').Replace('/','_')
+  $hmac = [Convert]::ToBase64String($b)
   az functionapp config appsettings set --name GpsEquipe-App-bad1 `
-    --resource-group GpsEquipe-RG --settings "TokenChaveHmac=$hmac" "ChaveGestor=$gestor" -o none
-  if ($LASTEXITCODE -eq 0) { $gestor | Set-Clipboard; Write-Output 'Chave do gestor no clipboard.' }
-  $b = $null; $hmac = $null; $gestor = $null
+    --resource-group GpsEquipe-RG --settings "TokenChaveHmac=$hmac" -o none
+  $b = $null; $hmac = $null
 }
+
+# 7b. Chave de acesso do gestor: gerada pela primeira rotação, que também cria
+#     a tabela Configuracao. A chave é exibida uma única vez.
+.\Admin.ps1 -TrocarChaveGestor
 
 # 8. CORS: apenas a origem do site estático
 az functionapp cors add --name GpsEquipe-App-bad1 --resource-group GpsEquipe-RG `
@@ -233,7 +244,7 @@ az functionapp cors add --name GpsEquipe-App-bad1 --resource-group GpsEquipe-RG 
 | --- | --- |
 | `TabelaConnectionString` | acesso ao Table Storage |
 | `TokenChaveHmac` | assina e verifica os tokens de sessão (32 bytes em base64) |
-| `ChaveGestor` | chave que o gestor digita na tela do relatório (43 caracteres) |
+
 
 ## Deploy
 
@@ -273,13 +284,19 @@ O passo 1 também pode ser feito pelo painel administrativo. O passo 2, não, de
 propósito: o segredo é exibido uma única vez, e tela de painel é o pior lugar
 para mostrar segredo de uso único.
 
-## Obter a chave de acesso do gestor
+## A chave de acesso do gestor
+
+Não existe comando de leitura. A tabela `Configuracao` guarda apenas o hash da
+chave: nem o servidor recupera o valor. Para dar acesso a quem não a tem, troque
+a chave e entregue a nova.
 
 ```powershell
-az functionapp config appsettings list --name GpsEquipe-App-bad1 `
-  --resource-group GpsEquipe-RG `
-  --query "[?name=='ChaveGestor'].value | [0]" -o tsv | Set-Clipboard
+.\Admin.ps1 -TrocarChaveGestor
 ```
+
+A rotação grava o hash novo na tabela e devolve a chave em claro uma única vez.
+Não reinicia a aplicação. O painel administrativo faz o mesmo, no cartão
+**Chave de acesso do gestor**.
 
 ---
 
@@ -349,6 +366,17 @@ efetiva era a do caminho mais fraco: seis dígitos, sem expiração e sem limite
 tentativas, num endereço público. O Incremento 8B removeu a função, o site
 antigo, os campos da tabela e o ramo de código. O campo `Pin` não é mais lido, o
 que significa que nenhum cliente antigo consegue enviar.
+
+**Chave do gestor em tabela, como hash.** Até o Incremento 8C ela era um app
+setting. Gravar app setting é operação do plano de gerenciamento e reinicia a
+Function App: a requisição que grava morre no restart, então a troca nunca
+poderia ser feita por tela. Escrever em tabela é plano de dados, com a mesma
+credencial que o código já usa, e não reinicia nada. A chave pode ser hash
+porque o servidor apenas **compara** o que o gestor digitou; o segredo do
+autenticador não pode, porque ele precisa **recalcular** o código a cada 30
+segundos. SHA-256 sem salt basta: a chave é sorteada, 32 bytes, e não há
+dicionário a percorrer. O custo assumido é que a chave em uso deixou de ser
+legível — gestor novo obriga rotação para todos.
 
 **Mapa sem chave de API.** Leaflet com tiles do OpenStreetMap: custo zero e
 nenhuma credencial de terceiro no frontend.

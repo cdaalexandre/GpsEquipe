@@ -404,6 +404,79 @@ ainda ausente.
 
 ---
 
+## 10. O lugar do segredo decide o que é possível fazer com ele
+
+**A chave do gestor não podia ser trocada por tela, e o obstáculo não era
+criptografia: era o lugar onde ela morava.**
+
+Ela era um app setting. Gravar app setting é operação do plano de gerenciamento
+do Azure, e reinicia a Function App. A requisição que grava morre no restart e
+nunca chega a responder — então a troca só existia pela linha de comando.
+
+Mudei o lugar, não o algoritmo. A chave passou a viver numa tabela.
+
+✔ **Plano de dados:** escrever numa tabela usa a mesma credencial que o código
+já usa para gravar coordenada. Nada reinicia.
+
+✘ **Plano de gerenciamento:** alterar a configuração do recurso é mexer no
+próprio serviço, e o serviço precisa subir de novo para enxergar o novo valor.
+
+O critério que separa os dois é *o que está sendo alterado*: o conteúdo que a
+aplicação manipula, ou a definição da aplicação.
+
+### Comparar e recalcular pedem coisas diferentes
+
+Aproveitei a mudança para guardar a chave como hash, e isso levantou a pergunta
+que eu já tinha respondido ao contrário no Incremento 9: por que o segredo do
+autenticador precisa ficar em claro e este não?
+
+✔ **Comparar:** o servidor recebe a chave digitada, calcula o hash dela e vê se
+bate com o guardado. Mão única serve.
+
+✘ **Recalcular:** o servidor precisa produzir o código de seis dígitos a cada
+trinta segundos, do zero. Isso exige o valor original.
+
+A mesma tabela guarda hoje um segredo em claro e um hash, e a razão não é
+inconsistência: é a operação que cada um exige.
+
+SHA-256 sem salt basta aqui. Salt e derivação lenta existem contra senha humana,
+que vem de um espaço pequeno e previsível. Esta chave é sorteada, 32 bytes — não
+há dicionário a percorrer.
+
+### O que eu perdi de propósito
+
+Não existe mais como ler a chave em uso. O `Admin.ps1 -ChaveGestor` foi removido
+porque não havia o que ele lesse.
+
+Isso muda a rotina de quem administra: gestor novo na equipe obriga a trocar a
+chave para todos. Eu aceitei porque o `ModoDeUso` já documentava essa
+consequência para a troca; o 8C apenas aumentou a frequência em que ela ocorre.
+
+### A relação com o 8A
+
+O 8A tirou o segredo da URL e passou a proteção da plataforma para o meu código.
+O 8C tirou o segredo da configuração e passou o governo dele para a aplicação.
+É o mesmo movimento, na mesma direção, com o mesmo custo: mais coisa depende de
+verificação que eu escrevi.
+
+A Limitação 3 continua de pé. A chave autoriza, não identifica — e agora
+também não se deixa ler.
+
+### O erro que a documentação não pega
+
+Três scripts de demonstração continuaram gravando o app setting depois da
+mudança. O `Demo-3-Encerrar.ps1` era o pior: gravava, conferia que gravou, e
+reportava "chave rotacionada" — tudo verdade sobre o app setting, tudo
+irrelevante para o sistema, porque a chave real seguia a mesma na tabela.
+
+Segredo que se acredita ter matado e não se matou é pior que segredo não
+rotacionado: no segundo caso você sabe que ele está vivo.
+
+Mudar onde um dado mora alcança tudo que o lê e tudo que o escreve, inclusive o
+que está fora do projeto compilado. O compilador achou zero desses três.
+
+---
+
 ## Observação final sobre o método de trabalho
 
 Três episódios desta reconstrução ensinaram mais que os quatro incrementos
