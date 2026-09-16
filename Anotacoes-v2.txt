@@ -978,6 +978,114 @@ ERRO DE METODO QUE ATRASOU ISTO EM DOIS BLOCOS:
   2>$null, e toda escrita checa $LASTEXITCODE antes do passo seguinte.
 
 ================================================================================
+--------------------------------------------------------------------------------
+  I - INCREMENTO 7: IDENTIFICACAO POR TOTP (2026-09-16)
+--------------------------------------------------------------------------------
+PONTO DE PARTIDA: a limitacao declarada na Secao 6 das reflexoes - o PIN prova
+que alguem conhece o PIN daquele numero, nao que a pessoa e o dono da linha.
+A pergunta foi se havia caminho mais facil com o autenticador da Microsoft.
+Havia DOIS, e sao coisas diferentes:
+  ENTRA ID (Easy Auth do App Service) - login corporativo com MFA, sem codigo.
+    DESCARTADO POR ORA: Easy Auth se configura por Function App, nao por funcao.
+    Em modo "exigir autenticacao" bloquearia tambem o ReceberCoordenadas, que e
+    anonimo de proposito porque quem chama e o site publico no Blob. Fica para
+    depois da gravacao, e o ganho seria para o GESTOR, nao para o colaborador.
+  TOTP (RFC 6238) - o Microsoft Authenticator como gerador de codigos, por
+    "inserir chave manualmente". Nenhuma conta Microsoft, nenhum servidor
+    externo. FOI O ESCOLHIDO.
+
+O SMS FOI ABANDONADO. A pesquisa do bloco D continua valida como levantamento,
+mas com TOTP nao existe nada a entregar: o admin mostra o segredo uma vez e o
+colaborador cadastra no app. Zero custo, zero dependencia externa, e o codigo
+morre em 30 segundos em vez de ser um PIN fixo de 6 digitos sem bloqueio.
+
+VALIDACAO ANTES DE ESCREVER CODIGO (a ordem importou):
+  1. algoritmo em PowerShell conferido contra os vetores da RFC 6238:
+     segredo "12345678901234567890", contador 1 -> 287082, 37037036 -> 081804.
+  2. segredo de teste cadastrado no Microsoft Authenticator real do celular:
+     os codigos coincidiram e trocaram juntos.
+  3. so depois o algoritmo virou C#.
+Se tivesse comecado pelo C#, um erro de algoritmo e um erro de integracao
+ficariam indistinguiveis.
+
+A TROCA QUE O TOTP IMPOE, DECLARADA:
+  o PIN e guardado como hash PBKDF2 - o servidor nao sabe o PIN de ninguem.
+  o segredo TOTP NAO pode ser hash: o servidor precisa dele em claro para
+  recalcular o codigo a cada janela de 30s. Verificacao por comparacao de hash
+  x verificacao por recalculo. Consequencia: vazamento da tabela expoe os
+  segredos TOTP, o que nao acontecia com o PIN. Mitigacao para trabalho futuro:
+  cifrar o segredo com chave em app setting, fora do storage.
+
+ARQUIVOS DO INCREMENTO 7:
+  SegurancaTotp.cs   RFC 6238. Tolerancia de 1 janela (aceita anterior e
+                     seguinte), recusa janela ja usada, comparacao em tempo
+                     constante. Base32 ida e volta.
+  DefinirTotp.cs     administrativa: cadastrar gera segredo e o devolve UMA vez;
+                     conferir valida um codigo sem consumir o anti-replay.
+  SegurancaToken.cs  token assinado, SEM estado no servidor. Formato
+                     base64url(payload).base64url(HMACSHA256(payload)), payload
+                     v1|celular|expiraUnix|carimboSegredoUnix. Validade 8h.
+  IniciarSessao.cs   anonima (como o ReceberCoordenadas): troca codigo por token,
+                     consome a janela, falha fechada com texto unico nas 5 causas.
+  index-totp.html    pagina PARALELA no $web. O index.html da gravacao NAO foi
+                     tocado: as duas rodam lado a lado.
+
+POR QUE TOKEN ASSINADO E NAO SESSAO EM TABELA:
+  o site envia coordenada a cada 10 segundos. Sessao em tabela custaria uma
+  leitura extra por envio, por colaborador. Token assinado se verifica sozinho.
+  PRECO: nao ha revogacao imediata - token roubado vale ate expirar.
+  MITIGACAO EMBUTIDA: o carimbo do TotpDefinidoEm vai dentro do payload.
+  Recadastrar o TOTP do colaborador muda o carimbo e mata todos os tokens dele
+  de uma vez. A verificacao sai de graca, porque o ReceberCoordenadas ja lia
+  aquela linha para conferir o PIN.
+
+O BUG QUE CUSTOU TRES BLOCOS - MERGE E INICIALIZADOR DE PROPRIEDADE:
+  TableUpdateMode.Merge preserva apenas propriedade AUSENTE do payload. Nao e
+  "atualize o que eu mudei": e "atualize o que eu mandei". Uma
+  FuncionarioPermitidoEntidade parcial, com so as chaves e um campo, leva
+  TotpSegredo, PinSalt e PinHash como STRING VAZIA - porque a classe declara
+  = string.Empty como inicializador - e o Merge sobrescreve os valores reais
+  com vazio. DateTimeOffset? sobreviveu, porque nulo nao e serializado.
+  Linha do tempo observada em 16/09:
+    12:21 DefinirTotp gravou e apagou PinSalt e PinHash
+    12:41 IniciarSessao gravou e apagou TotpSegredo
+    12:54 DefinirPin restaurou o PIN, porque ele faz read-modify-write
+  CORRECAO: patch por TableEntity com dicionario, que so carrega as chaves
+  declaradas. Commit 84ba27e.
+  O AnonimizarCoordenadas ja fazia certo desde 15/09, com um comentario
+  explicando exatamente isso. A licao ja estava escrita no proprio repositorio
+  e foi ignorada ao escrever a funcao nova.
+
+ACEITE ANULADO E REFEITO - HONESTIDADE DE MEDICAO:
+  o 403 de "mesmo codigo duas vezes" foi celebrado como anti-replay em 12:41.
+  Era o segredo apagado pela propria chamada anterior: resposta certa pelo
+  motivo errado. O aceite foi ANULADO e refeito depois da correcao, com
+  verificacao do campo na tabela ANTES e DEPOIS de cada passo.
+  Aceites validos (13:00, com segredo comprovadamente intacto):
+    cadastrar TOTP preserva PIN        -> salt=True hash=True
+    TOTP sobrevive a IniciarSessao     -> True
+    mesmo codigo de novo               -> 403 (anti-replay)
+    janela na tabela                   -> 59652083 para 59652123
+    envio com token valido             -> 200
+    envio com PIN valido               -> 200 (caminho antigo intacto)
+    token com assinatura alterada      -> 403
+    token de um numero usado por outro -> 403
+    sem token e sem PIN                -> 403
+    todos com o mesmo texto: Identificacao invalida.
+  Tambem invalidos e descartados: tres testes do bloco anterior rodaram com
+  token NULO por causa de um ConvertFrom-Json sobre corpo que nao era JSON.
+  Deram 403 por ausencia de token, nao por assinatura.
+
+LICAO DE TESTE INTERATIVO: Read-Host sem validar e sem ecoar o tamanho do que
+recebeu transforma Enter vazio em "codigo invalido" e mistura a causa. Todo
+teste que pede entrada humana passou a imprimir quantos caracteres recebeu e a
+repetir a pergunta ate a entrada casar com o formato.
+
+ESTADO AO FIM DO DIA: o PIN e o TOTP COEXISTEM. Enquanto isso, a seguranca real
+e a do mais fraco, que e o PIN. A remocao do PIN e um passo proprio (7d),
+depois da gravacao, para nao mexer no caminho critico da Cena 3 antes do video.
+
+================================================================================
   FIM DO REGISTRO ADICIONAL DE 2026-09-15
 ================================================================================
 
