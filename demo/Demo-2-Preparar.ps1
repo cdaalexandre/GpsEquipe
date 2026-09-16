@@ -7,30 +7,36 @@
     Uso:
       .\Demo-2-Preparar.ps1                 # faz tudo
       .\Demo-2-Preparar.ps1 -SemSeedLgpd    # nao cria o registro antigo da cena LGPD
-      .\Demo-2-Preparar.ps1 -SemPinNovo     # nao redefine o PIN (mantem o atual)
       .\Demo-2-Preparar.ps1 -NovoTotp       # gera segredo TOTP novo (exige recadastrar o app)
 
     O que faz, em ordem:
       1  guarda de tenant
       2  inventario de recursos, functions, runtime
       3  garante o colaborador cadastrado
-      4a confere o segredo TOTP; gera um novo com -NovoTotp
-      4b PLANO B: PIN novo de 6 digitos via DefinirPin, para o index.html antigo
+      4  confere o segredo TOTP; gera um novo com -NovoTotp
       5  teste ponta a ponta POR TOKEN, com faxina automatica do registro
       6  falhas de identificacao nos DOIS endpoints (403 com texto unico)
       7  semente da cena LGPD: registro em particao antiga
-      8  chave do relatorio -> arquivo local + clipboard (valor nunca no console)
+      8  chave de acesso do gestor -> arquivo local (valor nunca no console)
       9  atalhos de cena em C:\demo-gpsequipe\cena.ps1
-     10  aquecimento dos endpoints e checklist final
+     10  aquecimento, tela de entrada do gestor e verificacao final
 
-    SEGREDO: PIN e URL com chave vao para C:\demo-gpsequipe (fora do repo e fora
-    do OneDrive). O Demo-3-Encerrar.ps1 apaga essa pasta e rotaciona a chave.
+    INCREMENTO 8B: o PIN foi extirpado do sistema. Nao existe mais plano B por
+    PIN, nem a function DefinirPin, nem o index.html antigo. Token de sessao e a
+    unica identificacao aceita pelo ReceberCoordenadas.
+    INCREMENTO 8A: a chave do relatorio saiu da URL. O gestor digita a chave de
+    acesso numa tela e recebe um cookie de sessao de 8 horas.
+
+    SEGREDO: o segredo TOTP e a chave de acesso do gestor vao para
+    C:\demo-gpsequipe (fora do repo e fora do OneDrive). A URL do relatorio NAO
+    e mais segredo: pode ser mostrada na tela. O Demo-3-Encerrar.ps1 apaga essa
+    pasta; a chave a rotacionar agora e o app setting ChaveGestor, nao mais a
+    chave de funcao do VerRelatorio.
     Somente texto ASCII: PowerShell 5.1 le arquivo sem BOM como ANSI.
 #>
 [CmdletBinding()]
 param(
     [switch]$SemSeedLgpd,
-    [switch]$SemPinNovo,
     [switch]$NovoTotp
 )
 
@@ -137,8 +143,6 @@ function Get-Linhas($tabela, $filtro) {
     return @(($j | ConvertFrom-Json).items)
 }
 
-# PIN de 6 digitos, sorteio criptografico com rejeicao (evita vies do modulo).
-# RandomNumberGenerator.GetInt32 e .NET Core 3+; o PS 5.1 roda sobre .NET Framework.
 # Incremento 7: TOTP calculado localmente, para o script abrir sessao sem
 # depender do celular. Mesmo algoritmo do SegurancaTotp.cs, conferido contra os
 # vetores da RFC 6238 antes de virar codigo.
@@ -171,20 +175,6 @@ function Get-TotpCodigo([string]$segredoBase32) {
 function Get-SegredoLocal([string]$caminho) {
     if (-not (Test-Path $caminho)) { return $null }
     return (Get-Content $caminho | Where-Object { $_ -match '^[A-Z2-7]{32}$' } | Select-Object -First 1)
-}
-
-function New-Pin {
-    $rng = New-Object Security.Cryptography.RNGCryptoServiceProvider
-    $digitos = @()
-    while ($digitos.Count -lt 6) {
-        $b = New-Object byte[] 1
-        $rng.GetBytes($b)
-        if ($b[0] -lt 250) { $digitos += ($b[0] % 10) }
-    }
-    $rng.Dispose()
-    $pin = -join $digitos
-    if ($pin -match '^(\d)\1{5}$') { return (New-Pin) }   # servidor recusa digitos iguais
-    return $pin
 }
 
 # ------------------------------------------------------------------ inicio
@@ -222,9 +212,16 @@ if ($LASTEXITCODE -eq 0 -and $fnJson) {
     }
 }
 Tabela $fn
-$esperadas = @('ReceberCoordenadas','VerRelatorio','DefinirPin','AnonimizarCoordenadas')
+# Incremento 8B: sete functions. DefinirPin saiu de producao e a ausencia dela
+# e conferida abaixo: se voltar, o PIN voltou por tras e a extirpacao regrediu.
+$esperadas = @('ReceberCoordenadas','VerRelatorio','IniciarSessao','DefinirTotp',
+               'GerenciarColaborador','VerStatus','AnonimizarCoordenadas')
 $faltando  = @($esperadas | Where-Object { $_ -notin @($fn.funcao) })
-Marcar 'functions em producao' ($faltando.Count -eq 0) ($(if ($faltando.Count) { 'faltando: ' + ($faltando -join ', ') } else { '4 de 4' }))
+Marcar 'functions em producao' ($faltando.Count -eq 0) ($(if ($faltando.Count) { 'faltando: ' + ($faltando -join ', ') } else { '7 de 7' }))
+
+$pinViva = 'DefinirPin' -in @($fn.funcao)
+Escrever ('DefinirPin em producao? ' + $pinViva + '  (espera False: extirpada no 8B)')
+Marcar 'PIN extirpado (functions)' (-not $pinViva) ($(if ($pinViva) { 'REGRESSAO: DefinirPin voltou' } else { 'DefinirPin ausente, correto' }))
 
 $fx = az functionapp config show --name $APP --resource-group $RG --query linuxFxVersion -o tsv 2>$null
 $st = az functionapp show --name $APP --resource-group $RG --query state -o tsv 2>$null
@@ -242,12 +239,20 @@ if (@($func).Count -eq 0) {
     Escrever ('exit code: ' + $LASTEXITCODE)
     $func = Get-Linhas $TB_FUNC ("RowKey eq '" + $CEL + "'")
 }
-Tabela (@($func) | Select-Object PartitionKey, RowKey, PinDefinidoEm)
+# Incremento 8B: PinDefinidoEm foi eliminado da tabela. A coluna que diz se o
+# colaborador esta habilitado agora e TotpDefinidoEm.
+Tabela (@($func) | Select-Object PartitionKey, RowKey, TotpDefinidoEm)
 Marcar 'cadastro do colaborador' (@($func).Count -eq 1) $CEL
 
-# ------------------------------------------------ 4a. TOTP (Authenticator)
+# Regressao do 8B: nenhum campo de PIN pode ter voltado para a linha.
+$campos = @()
+if (@($func).Count -eq 1) { $campos = @(@($func)[0].PSObject.Properties.Name | Where-Object { $_ -like 'Pin*' }) }
+Escrever ('campos Pin* na linha do colaborador: ' + $campos.Count + '  (espera 0)')
+Marcar 'PIN extirpado (tabela)' ($campos.Count -eq 0) ($(if ($campos.Count) { 'REGRESSAO: ' + ($campos -join ', ') } else { 'nenhum campo de PIN' }))
+
+# ------------------------------------------------ 4. TOTP (Authenticator)
 Escrever ''
-Escrever '--- 4a. TOTP (Microsoft Authenticator) ---'
+Escrever '--- 4. TOTP (Microsoft Authenticator) ---'
 $ARQ_TOTP = Join-Path $PASTA ('totp-' + $CEL + '.txt')
 $temTotp = -not [string]::IsNullOrEmpty((@($func)[0].TotpSegredo))
 Escrever ('segredo na tabela : ' + $temTotp + ' | definido em: ' + (@($func)[0].TotpDefinidoEm))
@@ -285,41 +290,6 @@ if ($NovoTotp -or -not $temTotp) {
     }
 }
 Marcar 'TOTP cadastrado' ($temTotp -and $null -ne $segredoLocal) ('tabela: ' + $temTotp + ', segredo em disco: ' + ($null -ne $segredoLocal))
-
-# --------------------------------- 4b. plano B: PIN do index.html antigo
-Escrever ''
-Escrever '--- 4b. PLANO B: PIN (index.html antigo, se o TOTP falhar na camera) ---'
-$ARQ_PIN = Join-Path $PASTA 'pin-colaborador.txt'
-$pin = $null
-if ($SemPinNovo) {
-    Escrever 'PIN mantido por -SemPinNovo. Use o PIN que voce ja tem em maos.'
-    Marcar 'plano B (PIN)' ([bool](@($func)[0].PinDefinidoEm)) ('PinDefinidoEm: ' + (@($func)[0].PinDefinidoEm))
-} else {
-    $kDefinir = az functionapp function keys list --name $APP --resource-group $RG `
-                  --function-name DefinirPin --query default -o tsv 2>$null
-    if ([string]::IsNullOrWhiteSpace($kDefinir)) {
-        Escrever 'FALHA: nao consegui ler a chave de DefinirPin.'
-        Marcar 'plano B (PIN)' $false 'chave de DefinirPin nao lida'
-    } else {
-        $pin = New-Pin
-        $r = Invoke-Http -Uri ($API + '/definirpin?code=' + $kDefinir) -Metodo Post `
-               -Corpo (@{ Celular = $CEL; Pin = $pin } | ConvertTo-Json -Compress)
-        $kDefinir = $null
-        Escrever ('DefinirPin -> HTTP ' + $r.Status + '  ' + $r.Texto)
-        New-Item -ItemType Directory -Path $PASTA -Force | Out-Null
-        $txtPin = @(
-            ('PIN do colaborador ' + $CEL + ': ' + $pin),
-            ('gerado em ' + (Get-Date -Format 'yyyy-MM-dd HH:mm')),
-            'Usado pelo index.html antigo, plano B da gravacao.'
-        ) -join [Environment]::NewLine
-        [IO.File]::WriteAllText($ARQ_PIN, $txtPin, [Text.UTF8Encoding]::new($false))
-        # Regressao do bug do Merge (16/09): gravar o PIN NAO pode apagar o TOTP.
-        $func = Get-Linhas $TB_FUNC ("RowKey eq '" + $CEL + "'")
-        $totpAindaLa = -not [string]::IsNullOrEmpty((@($func)[0].TotpSegredo))
-        Escrever ('TOTP sobreviveu ao DefinirPin? ' + $totpAindaLa + '  (regressao do bug do Merge)')
-        Marcar 'plano B (PIN)' (($r.Status -eq 200) -and $totpAindaLa) ('PIN gravado em ' + $ARQ_PIN)
-    }
-}
 
 # --------------------------------- 5. teste ponta a ponta por TOKEN
 Escrever ''
@@ -373,13 +343,15 @@ if ($tokenTeste) {
     $pri = $partes[1].Substring(0, 1)
     $tokenFalso = $partes[0] + '.' + $(if ($pri -eq 'A') { 'Z' } else { 'A' }) + $partes[1].Substring(1)
 }
+# Incremento 8B, caso 6: manda o campo Pin que o sistema antigo aceitava. O 403
+# prova que o campo nao e mais LIDO - nenhum cliente antigo consegue enviar.
 $casos = @(
     @{ n = '1. codigo TOTP errado';   rota = 'iniciarsessao';      c = @{ Celular = $CEL; Codigo = '000001' } },
     @{ n = '2. numero fora da lista'; rota = 'iniciarsessao';      c = @{ Celular = '5511900000000'; Codigo = '123456' } },
     @{ n = '3. sem codigo';           rota = 'iniciarsessao';      c = @{ Celular = $CEL } },
     @{ n = '4. token adulterado';     rota = 'recebercoordenadas'; c = @{ Celular = $CEL; Token = $tokenFalso; Latitude = $LAT; Longitude = $LON } },
-    @{ n = '5. sem token e sem PIN';  rota = 'recebercoordenadas'; c = @{ Celular = $CEL; Latitude = $LAT; Longitude = $LON } },
-    @{ n = '6. PIN errado';           rota = 'recebercoordenadas'; c = @{ Celular = $CEL; Pin = '135791'; Latitude = $LAT; Longitude = $LON } }
+    @{ n = '5. sem token';            rota = 'recebercoordenadas'; c = @{ Celular = $CEL; Latitude = $LAT; Longitude = $LON } },
+    @{ n = '6. Pin em vez de token';  rota = 'recebercoordenadas'; c = @{ Celular = $CEL; Pin = '135791'; Latitude = $LAT; Longitude = $LON } }
 )
 $textos = @()
 foreach ($k in $casos) {
@@ -440,33 +412,38 @@ if ($SemSeedLgpd) {
     Marcar 'semente LGPD' $okSeed ($PART_LGPD + ' / ' + $ROW_LGPD + ' com celular legivel')
 }
 
-# ------------------------------------------------- 8. chave do relatorio
+# ------------------------------------------------- 8. chave de acesso do gestor
 Escrever ''
-Escrever '--- 8. CHAVE DO RELATORIO ---'
+Escrever '--- 8. CHAVE DE ACESSO DO GESTOR ---'
 New-Item -ItemType Directory -Path $PASTA -Force | Out-Null
-$kRel = az functionapp function keys list --name $APP --resource-group $RG `
-          --function-name VerRelatorio --query default -o tsv 2>$null
-$urlRel = $null
-if ([string]::IsNullOrWhiteSpace($kRel)) {
-    Escrever 'FALHA: chave de VerRelatorio nao lida.'
-    Marcar 'URL do relatorio' $false 'chave nao lida'
+# Incremento 8A: a porta do relatorio nao e mais a chave de FUNCAO do
+# VerRelatorio, e sim o app setting ChaveGestor, digitado numa tela. O filtro
+# nomeia a chave exata: filtro por !contains e case-sensitive e foi o que
+# vazou a AccountKey no incidente da Secao 8.
+$kGestor = az functionapp config appsettings list --name $APP --resource-group $RG `
+             --query "[?name=='ChaveGestor'].value | [0]" -o tsv 2>$null
+$urlRel = $API + '/verrelatorio'
+if ([string]::IsNullOrWhiteSpace($kGestor)) {
+    Escrever 'FALHA: app setting ChaveGestor nao lido.'
+    Marcar 'chave do gestor' $false 'ChaveGestor nao lida'
 } else {
-    $urlRel = $API + '/verrelatorio?code=' + $kRel
     $txt = @(
         'GpsEquipe - segredos TEMPORARIOS da gravacao',
         ('gerado em: ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')),
         '',
-        ('PIN do colaborador ' + $CEL + ': ' + $(if ($pin) { $pin } else { '(nao alterado nesta execucao)' })),
+        'Chave de acesso do gestor (digitar na tela de entrada do relatorio):',
+        $kGestor,
         '',
-        'URL do relatorio (favorito da gravacao):',
+        'URL do relatorio (NAO e segredo, pode aparecer na tela):',
         $urlRel,
         '',
+        'O segredo TOTP do colaborador esta em totp-<celular>.txt, nesta pasta.',
         'Apague esta pasta com Demo-3-Encerrar.ps1 -Executar.'
     ) -join "`r`n"
     [IO.File]::WriteAllText($ARQ_SEG, $txt, [Text.UTF8Encoding]::new($false))
     Escrever ('arquivo gravado : ' + $ARQ_SEG)
-    Escrever ('chave lida      : ' + $kRel.Length + ' caracteres (valor nunca impresso)')
-    Marcar 'URL do relatorio' $true 'no arquivo local e no clipboard'
+    Escrever ('chave lida      : ' + $kGestor.Length + ' caracteres (valor nunca impresso)')
+    Marcar 'chave do gestor' $true ('no arquivo local, ' + $kGestor.Length + ' caracteres')
 }
 
 # ------------------------------------------------- 9. atalhos de cena
@@ -536,9 +513,18 @@ function Ver-LogLgpd {
   az monitor app-insights query --app $APP --resource-group $RG --analytics-query "traces | where timestamp > ago(20m) | where message has 'Anonimizacao LGPD' | project timestamp, message | order by timestamp desc | take 3" --query "tables[0].rows" -o tsv
 }
 
+# Incremento 8A: a chave do gestor NAO fica escrita neste arquivo, para nao
+# aparecer na tela se ele for aberto na gravacao. Le do Azure na hora.
+function Copiar-ChaveGestor {
+  $k = az functionapp config appsettings list --name $APP --resource-group $RG --query "[?name=='ChaveGestor'].value | [0]" -o tsv 2>$null
+  if ([string]::IsNullOrWhiteSpace($k)) { return 'FALHA: ChaveGestor nao lida.' }
+  $k | Set-Clipboard
+  $n = $k.Length; $k = $null
+  'chave de ' + $n + ' caracteres no clipboard: cole na tela de entrada do relatorio.'
+}
+
 function Abrir-Relatorio { Start-Process $RELATORIO }
-function Abrir-Site      { Start-Process ($SITE + 'index-totp.html') }
-function Abrir-Site-Pin  { Start-Process $SITE }
+function Abrir-Site      { Start-Process $SITE }
 '@
 $modelo = $modelo.Replace('__SITE__', $SITE).
                   Replace('__API__', $API).
@@ -552,28 +538,46 @@ $modelo = $modelo.Replace('__SITE__', $SITE).
 [IO.File]::WriteAllText($ARQ_CENA, $modelo, [Text.UTF8Encoding]::new($false))
 Escrever ('gravado: ' + $ARQ_CENA)
 Escrever 'Na gravacao, carregue com:  . C:\demo-gpsequipe\cena.ps1'
-Marcar 'atalhos de cena' (Test-Path $ARQ_CENA) 'Iniciar-Sessao, Enviar-Posicao, Post-Coordenada, Ver-Antigos, Disparar-Timer, Ver-LogLgpd'
+Marcar 'atalhos de cena' (Test-Path $ARQ_CENA) 'Iniciar-Sessao, Enviar-Posicao, Post-Coordenada, Ver-Antigos, Disparar-Timer, Ver-LogLgpd, Copiar-ChaveGestor'
 
 # ------------------------------------- 10. aquecimento e verificacao final
 Escrever ''
 Escrever '--- 10. ENDPOINTS (aquecimento + verificacao) ---'
 $rSite = Invoke-Http -Uri $SITE
-Escrever ('site                 -> HTTP ' + $rSite.Status + ' (espera 200) | ' + $rSite.Texto.Length + ' bytes')
-Marcar 'site do colaborador' ($rSite.Status -eq 200) ($SITE)
+$sitePin = $rSite.Texto -match 'PIN|Pin'
+Escrever ('site                 -> HTTP ' + $rSite.Status + ' (espera 200) | ' + $rSite.Texto.Length + ' bytes | menciona PIN: ' + $sitePin + ' (espera False)')
+Marcar 'site do colaborador' (($rSite.Status -eq 200) -and (-not $sitePin)) ($SITE + ' servindo a pagina do autenticador')
 
-$rSem = Invoke-Http -Uri ($API + '/verrelatorio')
-Escrever ('relatorio sem chave  -> HTTP ' + $rSem.Status + ' (espera 401)')
-Marcar 'relatorio protegido' ($rSem.Status -eq 401) 'sem chave -> 401'
+# Incremento 8A: sem cookie, o relatorio devolve 401 E a tela de entrada no
+# corpo. Os dois importam: 401 sozinho poderia ser pagina de erro do host.
+$rSem = Invoke-Http -Uri $urlRel
+$temTela = $rSem.Texto -match 'Chave de acesso'
+Escrever ('relatorio sem sessao -> HTTP ' + $rSem.Status + ' (espera 401) | tela de entrada no corpo: ' + $temTela)
+Marcar 'tela de entrada do gestor' (($rSem.Status -eq 401) -and $temTela) '401 com o formulario de chave'
 
-if ($urlRel) {
-    $rCom = Invoke-Http -Uri $urlRel
-    $temMapa = $rCom.Texto -match 'leaflet'
-    Escrever ('relatorio com chave  -> HTTP ' + $rCom.Status + ' (espera 200) | ' + $rCom.Texto.Length + ' bytes | leaflet: ' + $temMapa)
-    Marcar 'relatorio abre com chave' (($rCom.Status -eq 200) -and $temMapa) ($rCom.Texto.Length.ToString() + ' bytes de HTML')
-    Set-Clipboard -Value $urlRel
-    Escrever 'URL completa do relatorio COPIADA para o clipboard: cole no navegador e salve como favorito.'
+if (-not [string]::IsNullOrWhiteSpace($kGestor)) {
+    # POST da chave: o 303 e seguido automaticamente pelo Invoke-WebRequest, e a
+    # sessao fica no cookie da WebSession. O resultado ja e o relatorio.
+    $ses = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $okRel = $false; $bytesRel = 0; $temMapa = $false; $stRel = 0
+    try {
+        $rCom = Invoke-WebRequest -Uri $urlRel -Method Post -Body ('chave=' + $kGestor) `
+                  -ContentType 'application/x-www-form-urlencoded' -WebSession $ses `
+                  -UseBasicParsing -TimeoutSec 90
+        $stRel = [int]$rCom.StatusCode
+        $bytesRel = $rCom.Content.Length
+        $temMapa = $rCom.Content -match 'leaflet'
+        $ck = @($ses.Cookies.GetCookies($urlRel) | Where-Object { $_.Name -eq 'gpsequipe_gestor' })
+        Escrever ('entrar + relatorio   -> HTTP ' + $stRel + ' (espera 200) | ' + $bytesRel + ' bytes | leaflet: ' + $temMapa + ' | cookie: ' + $ck.Count)
+        $okRel = ($stRel -eq 200) -and $temMapa -and ($ck.Count -eq 1)
+    } catch {
+        Escrever ('entrar + relatorio   -> FALHOU: ' + $_.Exception.Message)
+    }
+    Marcar 'relatorio abre com a chave' $okRel ($bytesRel.ToString() + ' bytes de HTML, cookie de sessao emitido')
+    $kGestor | Set-Clipboard
+    Escrever 'CHAVE DE ACESSO do gestor COPIADA para o clipboard: cole na tela de entrada.'
 }
-$kRel = $null
+$kGestor = $null
 
 Escrever ''
 Escrever '=================================================='
@@ -590,10 +594,14 @@ Escrever ''
 Escrever 'Antes de ligar a camera:'
 Escrever '  - abrir o Microsoft Authenticator na entrada GpsEquipe e deixar a mao'
 Escrever '  - se o segredo TOTP foi regerado agora, RECADASTRAR a entrada no app'
-Escrever '  - plano B: PIN em C:\demo-gpsequipe\pin-colaborador.txt, com o index.html antigo'
-Escrever '  - colar a URL do relatorio no navegador e salvar como favorito'
+Escrever '  - abrir o relatorio, colar a chave de acesso e ENTRAR antes de gravar:'
+Escrever '    a sessao vale 8h e evita digitar a chave na frente da camera'
+Escrever '  - favorito do relatorio pode ser salvo: a URL nao tem mais segredo'
 Escrever '  - fechar local.settings.json e qualquer aba com connection string'
 Escrever '  - Clear-Host e fonte do terminal em 18 ou mais'
 Escrever '  - notificacoes do Windows e do Teams em silencio'
 Escrever ''
 Escrever 'DEPOIS de gravar: .\Demo-3-Encerrar.ps1  (previa) e depois -Executar'
+Escrever 'ATENCAO: o Demo-3 rotaciona a chave de funcao do VerRelatorio, que o'
+Escrever '         Incremento 8A tornou irrelevante. A chave a rotacionar agora'
+Escrever '         e o app setting ChaveGestor. Corrigir o Demo-3.'
