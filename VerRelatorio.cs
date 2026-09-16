@@ -34,10 +34,12 @@ public class VerRelatorio
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post")] HttpRequest req)
     {
         var chaveHmac = SegurancaToken.LerChave(Environment.GetEnvironmentVariable("TokenChaveHmac"));
-        var chaveGestor = Environment.GetEnvironmentVariable("ChaveGestor");
-        if (chaveHmac.Length < 32 || string.IsNullOrWhiteSpace(chaveGestor))
+        // Incremento 8C: a guarda nao exige mais o app setting ChaveGestor. A
+        // chave do gestor vive na tabela Configuracao; o app setting sobrevive
+        // apenas como ponte de migracao, dentro do ChaveGestorStore.
+        if (chaveHmac.Length < 32)
         {
-            _logger.LogError("App setting TokenChaveHmac ou ChaveGestor ausente.");
+            _logger.LogError("App setting TokenChaveHmac ausente ou curto.");
             return new StatusCodeResult(500);
         }
 
@@ -50,7 +52,7 @@ public class VerRelatorio
                 var form = await req.ReadFormAsync();
                 digitada = form["chave"].ToString();
             }
-            if (!SegurancaToken.ConferirSegredo(digitada, chaveGestor))
+            if (!await ChaveGestorStore.ValidarAsync(digitada))
             {
                 _logger.LogWarning("Entrada de gestor recusada (chave de {N} caracteres).", digitada.Length);
                 return Porta(401, "Chave invalida.");

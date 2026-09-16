@@ -10,8 +10,9 @@
       .\Admin.ps1 -Habilitar 5511999998888 -Forcar   # regera a chave de quem ja tem
       .\Admin.ps1 -Conferir 5511999998888     # testa o codigo que o colaborador esta vendo
       .\Admin.ps1 -Remover 5511999998888      # remove, com confirmacao
-      .\Admin.ps1 -ChaveGestor                # poe a chave do gestor no clipboard
-      .\Admin.ps1 -TrocarChaveGestor          # gera chave nova, com confirmacao
+      .\Admin.ps1 -TrocarChaveGestor          # gera chave NOVA do gestor, com confirmacao
+      # -ChaveGestor saiu no Incremento 8C: a chave vive na tabela Configuracao
+      # como HASH. Nem o servidor recupera o valor. Perdida, so resta trocar.
 
     REGRAS QUE ESTE SCRIPT SEGUE:
       - Guarda de tenant antes de qualquer operacao. Aborta fora do Azure for
@@ -29,7 +30,6 @@ param(
     [string]$Habilitar,
     [string]$Conferir,
     [string]$Remover,
-    [switch]$ChaveGestor,
     [switch]$TrocarChaveGestor,
     [switch]$Forcar
 )
@@ -274,55 +274,45 @@ if ($Remover) {
     return
 }
 
-# ------------------------------------------------------- CHAVE DO GESTOR
-if ($ChaveGestor) {
-    Escrever ''
-    Escrever '--- CHAVE DE ACESSO DO GESTOR ---'
-    $k = az functionapp config appsettings list --name $APP --resource-group $RG `
-           --query "[?name=='ChaveGestor'].value | [0]" -o tsv 2>$null
-    if ([string]::IsNullOrWhiteSpace($k)) { Escrever 'ABORTADO: ChaveGestor nao lida.'; return }
-    $k | Set-Clipboard
-    $n = $k.Length
-    $k = $null
-    Escrever ('chave de ' + $n + ' caracteres no clipboard (espera 43).')
-    Escrever ''
-    Escrever 'Entregue por canal privado. Ela NAO identifica quem a usa: qualquer'
-    Escrever 'pessoa que a tenha ve a localizacao de todos os colaboradores.'
-    Escrever ''
-    Escrever 'O gestor cola essa chave na tela de entrada de:'
-    Escrever ('  ' + $API + '/verrelatorio')
-    return
-}
-
 # ------------------------------------------------------- TROCAR A CHAVE DO GESTOR
+# Incremento 8C: a troca deixou de gravar app setting. Grava na tabela
+# Configuracao, via API, e NAO reinicia a aplicacao. O painel faz o mesmo:
+# este bloco existe para quem prefere terminal.
 if ($TrocarChaveGestor) {
     Escrever ''
     Escrever '--- TROCAR A CHAVE DE ACESSO DO GESTOR ---'
     Escrever 'Uma unica chave serve a TODOS os gestores: trocar obriga todos a'
     Escrever 'receberem a nova.'
+    Escrever 'A anterior para de funcionar IMEDIATAMENTE.'
     Escrever 'Sessoes ja abertas continuam valendo ate vencer, no maximo 8 horas.'
-    Escrever 'Gravar app setting REINICIA a aplicacao: alguns segundos fora do ar.'
+    Escrever 'Nao reinicia a aplicacao: a escrita e na tabela, nao em app setting.'
+    Escrever 'A chave e exibida UMA VEZ e nao pode ser recuperada depois.'
     if (-not (Confirmar 'Confirma a troca?' 'TROCAR')) { return }
 
-    $b = New-Object byte[] 32
-    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-    $rng.GetBytes($b); $rng.Dispose()
-    $v = [Convert]::ToBase64String($b).TrimEnd('=').Replace('+','-').Replace('/','_')
-    $b = $null
-    az functionapp config appsettings set --name $APP --resource-group $RG `
-        --settings "ChaveGestor=$v" -o none
-    if ($LASTEXITCODE -ne 0) { Escrever ('FALHA ao gravar: exit ' + $LASTEXITCODE); $v = $null; return }
+    $chave = Get-ChaveHost
+    if (-not $chave) { Escrever 'ABORTADO: chave de host nao lida.'; return }
+    $r = Invoke-Api 'gerenciarchavegestor' $chave @{ Acao = 'trocar'; Confirmacao = 'TROCAR' }
+    $chave = $null
+    if ($r.Status -ne 200) {
+        Escrever ('ABORTADO: HTTP ' + $r.Status + ' -> ' + $r.Texto)
+        return
+    }
 
-    $conf = az functionapp config appsettings list --name $APP --resource-group $RG `
-              --query "[?name=='ChaveGestor'].value | [0]" -o tsv 2>$null
-    $igual = ($conf -eq $v)
-    $n = $v.Length
-    $v | Set-Clipboard
-    $v = $null; $conf = $null
+    $nova = ($r.Texto | ConvertFrom-Json).chave
+    if ([string]::IsNullOrWhiteSpace($nova)) { Escrever 'ABORTADO: resposta sem chave.'; return }
+    $nova | Set-Clipboard
+    $n = $nova.Length
+    $nova = $null
     Escrever ''
-    Escrever ('gravada: ' + $n + ' caracteres | confere com a gerada: ' + $igual)
-    Escrever 'CHAVE NOVA NO CLIPBOARD. Entregue aos gestores antes de usar o clipboard'
-    Escrever 'para outra coisa.'
+    Escrever ('CHAVE NOVA DE ' + $n + ' CARACTERES NO CLIPBOARD (espera 43).')
+    Escrever 'Entregue aos gestores por canal privado ANTES de usar o clipboard para'
+    Escrever 'outra coisa. Ela NAO sera exibida de novo.'
+    Escrever ''
+    Escrever 'Ela NAO identifica quem a usa: qualquer pessoa que a tenha ve a'
+    Escrever 'localizacao de todos os colaboradores.'
+    Escrever ''
+    Escrever 'O gestor cola essa chave na tela de entrada de:'
+    Escrever ('  ' + $API + '/verrelatorio')
     return
 }
 
@@ -358,8 +348,7 @@ Escrever '  .\Admin.ps1 -Habilitar <numero>           cadastra e gera a chave do
 Escrever '  .\Admin.ps1 -Habilitar <numero> -Forcar   regera a chave de quem ja tem'
 Escrever '  .\Admin.ps1 -Conferir  <numero>           testa o codigo que o colaborador ve'
 Escrever '  .\Admin.ps1 -Remover   <numero>           remove, com confirmacao'
-Escrever '  .\Admin.ps1 -ChaveGestor                  chave do gestor no clipboard'
-Escrever '  .\Admin.ps1 -TrocarChaveGestor            gera chave nova, com confirmacao'
+Escrever '  .\Admin.ps1 -TrocarChaveGestor            gera chave NOVA do gestor (a atual morre)'
 Escrever ''
 Escrever 'O painel no navegador mostra o mesmo estado, mais coordenadas e LGPD:'
 Escrever '  https://gpsequipebad1.z15.web.core.windows.net/admin.html'

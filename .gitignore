@@ -262,3 +262,5 @@ paket-files/
 # Python Tools for Visual Studio (PTVS)
 __pycache__/
 *.pyc
+# Backups locais do Incremento 8C (desfazer de curto prazo)
+*.bak-8c

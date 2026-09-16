@@ -119,6 +119,18 @@
       <p class="nota">Apenas digitos, com 55 e DDD. Cadastrar NAO define a identificacao: sem o autenticador cadastrado o colaborador recebe 403 ao tentar enviar (falha fechada). O cadastro da chave do autenticador e feito por bloco PowerShell, nao por este painel: a chave e exibida uma unica vez e nao deve aparecer em tela de painel.</p>
       <div id="gMensagem"></div>
     </div>
+
+    <div class="card" style="margin-top:16px">
+      <h2>Chave de acesso do gestor</h2>
+      <div class="par"><span>Onde vive</span><span id="cgOnde">-</span></div>
+      <div class="par"><span>Trocada em</span><span id="cgQuando">-</span></div>
+      <div class="linha" style="margin-top:12px">
+        <input type="text" id="cgConfirma" placeholder="digite TROCAR para liberar" autocomplete="off">
+        <button id="btTrocarChave" class="perigo" disabled>Trocar chave</button>
+      </div>
+      <p class="nota">Uma unica chave serve a TODOS os gestores: trocar obriga todos a receberem a nova. A anterior para de funcionar na hora; sessoes ja abertas seguem validas ate vencer, no maximo 8 horas. A chave nova vai para a AREA DE TRANSFERENCIA, nao para a tela: e exibida uma unica vez e nao pode ser recuperada, porque o sistema guarda apenas o hash dela.</p>
+      <div id="cgMensagem"></div>
+    </div>
   </main>
 </div>
 
@@ -208,6 +220,7 @@ function desenhar(d) {
   el('painel').classList.remove('escondido');
   el('gestao').classList.remove('escondido');
   el('btAtualizar').classList.remove('escondido');
+  cgEstado();
 }
 
 async function carregar() {
@@ -254,7 +267,8 @@ async function chamarAdmin(rota, corpo) {
   // 401 aqui quase sempre significa chave de FUNCAO em vez de chave de HOST:
   // a de funcao abre o status e recusa cadastro e remocao.
   if (r.status === 401) { m = 'Nao autorizado (401). Esta chave provavelmente e a da funcao VerStatus, que abre so o status. Use a chave de HOST da Function App.'; }
-  return { status: r.status, ok: r.ok, mensagem: m };
+  // dados: o JSON inteiro, para quem precisa de mais que a mensagem.
+  return { status: r.status, ok: r.ok, mensagem: m, dados: dados };
 }
 
 async function operar(acao) {
@@ -279,6 +293,65 @@ async function operar(acao) {
     gMsg('Falha de rede ou bloqueio de CORS na chamada POST. Veja o console do navegador.', 's-erro');
   }
 }
+
+function cgMsg(texto, classe) {
+  el('cgMensagem').innerHTML = texto ? '<div class="aviso-item ' + classe + '">' + texto + '</div>' : '';
+}
+
+// Botao so libera com a palavra exata: operacao destrutiva nao acontece por
+// clique unico. O servidor confere a mesma palavra, entao a tela nao e a guarda.
+function cgAvaliarConfirmacao() {
+  el('btTrocarChave').disabled = (el('cgConfirma').value.trim() !== 'TROCAR');
+}
+
+async function cgEstado() {
+  if (!chave) { return; }
+  try {
+    var r = await chamarAdmin('/gerenciarchavegestor', { Acao: 'estado' });
+    if (!r.ok) { el('cgOnde').textContent = 'HTTP ' + r.status; return; }
+    var d = r.dados || {};
+    el('cgOnde').textContent = d.emTabela ? 'tabela Configuracao (hash)' : 'app setting antigo, em claro';
+    el('cgQuando').textContent = d.trocadaEm || 'nunca trocada';
+  } catch (e) {
+    el('cgOnde').textContent = 'falha de rede';
+  }
+}
+
+async function cgTrocar() {
+  if (!chave) { cgMsg('Carregue o status primeiro: a chave e a mesma.', 's-erro'); return; }
+  if (!confirm('Trocar a chave de acesso do gestor?\n\nTODOS os gestores precisarao receber a chave nova. A atual para de funcionar imediatamente.')) { return; }
+
+  el('btTrocarChave').disabled = true;
+  cgMsg('Gerando...', 's-aviso');
+  try {
+    var r = await chamarAdmin('/gerenciarchavegestor', { Acao: 'trocar', Confirmacao: 'TROCAR' });
+    if (!r.ok || !r.dados || !r.dados.chave) {
+      cgMsg(r.mensagem + ' (HTTP ' + r.status + ')', 's-erro');
+      return;
+    }
+    var nova = r.dados.chave;
+    var n = r.dados.caracteres;
+    try {
+      await navigator.clipboard.writeText(nova);
+      cgMsg('Chave de ' + n + ' caracteres NA AREA DE TRANSFERENCIA. Entregue aos gestores por canal privado ANTES de copiar outra coisa. Nao sera exibida de novo.', 's-ok');
+    } catch (e) {
+      // Fallback: clipboard bloqueado. Ai nao ha alternativa a mostrar o valor.
+      el('cgMensagem').innerHTML =
+        '<div class="aviso-item s-aviso">O navegador bloqueou a area de transferencia. Copie AGORA, esta e a unica exibicao:' +
+        '<br><input type="text" readonly style="width:100%;margin-top:8px" value="' + nova + '"></div>';
+    }
+    nova = null;
+    el('cgConfirma').value = '';
+    await cgEstado();
+  } catch (e) {
+    cgMsg('Falha de rede na chamada POST. A chave pode ou nao ter sido trocada: consulte o estado.', 's-erro');
+  } finally {
+    cgAvaliarConfirmacao();
+  }
+}
+
+el('cgConfirma').addEventListener('input', cgAvaliarConfirmacao);
+el('btTrocarChave').addEventListener('click', cgTrocar);
 
 el('btCadastrar').addEventListener('click', function () { operar('cadastrar'); });
 el('btRemover').addEventListener('click', function () { operar('remover'); });
