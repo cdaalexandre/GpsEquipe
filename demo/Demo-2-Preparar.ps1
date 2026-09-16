@@ -207,7 +207,12 @@ Marcar 'recursos no RG' (@($rec).Count -ge 4) (@($rec).Count.ToString() + ' recu
 $fnJson = az functionapp function list --name $APP --resource-group $RG -o json 2>$null
 $fn = @()
 if ($LASTEXITCODE -eq 0 -and $fnJson) {
-    $fn = @($fnJson | ConvertFrom-Json) | ForEach-Object {
+        # PS 5.1: ConvertFrom-Json emite um array JSON como UM objeto no pipeline.
+    # Sem a variavel intermediaria, o ForEach-Object itera UMA vez com $_ igual
+    # ao array inteiro - e o resultado mistura o nome do ultimo item com o
+    # binding do primeiro. A variavel desembala o array.
+    $fnObj = $fnJson | ConvertFrom-Json
+    $fn = @($fnObj) | ForEach-Object {
         [pscustomobject]@{
             funcao  = ($_.name -split '/')[-1]
             trigger = $_.config.bindings[0].type
@@ -332,32 +337,6 @@ if ($sobrando.Count -gt 0) {
 } else {
     Escrever 'nenhum teste de falha gravou registro (correto)'
 }
-# O caso 4 gravou um registro enquanto o teste estava errado. Faxina defensiva:
-# nenhum caso da secao 6 deveria gravar nada, mas conferir e barato.
-$hojeFax = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
-$sobrando = @(Get-Linhas $TB_COORD ("PartitionKey eq '" + $hojeFax + "'") | Where-Object { $_.RowKey -notin $antes })
-if ($sobrando.Count -gt 0) {
-    Escrever ('ATENCAO: ' + $sobrando.Count + ' registro(s) gravado(s) pelos testes de falha -> apagando')
-    foreach ($s in $sobrando) {
-        az storage entity delete --account-name $STO --table-name $TB_COORD `
-            --partition-key $s.PartitionKey --row-key $s.RowKey --auth-mode key -o none 2>$null
-    }
-} else {
-    Escrever 'nenhum teste de falha gravou registro (correto)'
-}
-# O caso 4 gravou um registro enquanto o teste estava errado. Faxina defensiva:
-# nenhum caso da secao 6 deveria gravar nada, mas conferir e barato.
-$hojeFax = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
-$sobrando = @(Get-Linhas $TB_COORD ("PartitionKey eq '" + $hojeFax + "'") | Where-Object { $_.RowKey -notin $antes })
-if ($sobrando.Count -gt 0) {
-    Escrever ('ATENCAO: ' + $sobrando.Count + ' registro(s) gravado(s) pelos testes de falha -> apagando')
-    foreach ($s in $sobrando) {
-        az storage entity delete --account-name $STO --table-name $TB_COORD `
-            --partition-key $s.PartitionKey --row-key $s.RowKey --auth-mode key -o none 2>$null
-    }
-} else {
-    Escrever 'nenhum teste de falha gravou registro (correto)'
-}
 $tokenTeste = $null
 if ($null -eq $segredoLocal) {
     Escrever 'sem segredo em disco: nao consigo calcular codigo. Rode com -NovoTotp.'
@@ -432,45 +411,6 @@ if ($tokenTeste) {
            -Corpo (@{ Celular = '5511900000002'; Token = $tokenTeste; Latitude = $LAT; Longitude = $LON } | ConvertTo-Json -Compress)
     Escrever (('{0,-24} {1,-20} -> {2}  [{3}]' -f '7. token de outro numero', 'recebercoordenadas', $r.Status, $r.Texto))
     Marcar 'celular amarrado ao token' ($r.Status -eq 403) 'token de um numero recusado para outro'
-}
-# O caso 4 gravou um registro enquanto o teste estava errado. Faxina defensiva:
-# nenhum caso da secao 6 deveria gravar nada, mas conferir e barato.
-$hojeFax = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
-$sobrando = @(Get-Linhas $TB_COORD ("PartitionKey eq '" + $hojeFax + "'") | Where-Object { $_.RowKey -notin $antes })
-if ($sobrando.Count -gt 0) {
-    Escrever ('ATENCAO: ' + $sobrando.Count + ' registro(s) gravado(s) pelos testes de falha -> apagando')
-    foreach ($s in $sobrando) {
-        az storage entity delete --account-name $STO --table-name $TB_COORD `
-            --partition-key $s.PartitionKey --row-key $s.RowKey --auth-mode key -o none 2>$null
-    }
-} else {
-    Escrever 'nenhum teste de falha gravou registro (correto)'
-}
-# O caso 4 gravou um registro enquanto o teste estava errado. Faxina defensiva:
-# nenhum caso da secao 6 deveria gravar nada, mas conferir e barato.
-$hojeFax = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
-$sobrando = @(Get-Linhas $TB_COORD ("PartitionKey eq '" + $hojeFax + "'") | Where-Object { $_.RowKey -notin $antes })
-if ($sobrando.Count -gt 0) {
-    Escrever ('ATENCAO: ' + $sobrando.Count + ' registro(s) gravado(s) pelos testes de falha -> apagando')
-    foreach ($s in $sobrando) {
-        az storage entity delete --account-name $STO --table-name $TB_COORD `
-            --partition-key $s.PartitionKey --row-key $s.RowKey --auth-mode key -o none 2>$null
-    }
-} else {
-    Escrever 'nenhum teste de falha gravou registro (correto)'
-}
-# O caso 4 gravou um registro enquanto o teste estava errado. Faxina defensiva:
-# nenhum caso da secao 6 deveria gravar nada, mas conferir e barato.
-$hojeFax = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
-$sobrando = @(Get-Linhas $TB_COORD ("PartitionKey eq '" + $hojeFax + "'") | Where-Object { $_.RowKey -notin $antes })
-if ($sobrando.Count -gt 0) {
-    Escrever ('ATENCAO: ' + $sobrando.Count + ' registro(s) gravado(s) pelos testes de falha -> apagando')
-    foreach ($s in $sobrando) {
-        az storage entity delete --account-name $STO --table-name $TB_COORD `
-            --partition-key $s.PartitionKey --row-key $s.RowKey --auth-mode key -o none 2>$null
-    }
-} else {
-    Escrever 'nenhum teste de falha gravou registro (correto)'
 }
 $tokenTeste = $null
 # --------------------------------------------------- 7. semente da cena LGPD
