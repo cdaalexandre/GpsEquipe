@@ -709,6 +709,8 @@ Sem expor a chave:
 az storage entity delete --account-name gpsequipebad1 `
   --table-name FuncionariosPermitidos `
   --partition-key "FUNCIONARIO" --row-key "5511982253855" --auth-mode key
+```
+
 ## Obter a chave de acesso do gestor
 
 Nao existe. A tabela `Configuracao` guarda apenas o hash da chave. Para dar
@@ -725,6 +727,3 @@ a chave em claro uma unica vez. Nao reinicia a aplicacao.
 
 Pelo painel: cartao **Chave de acesso do gestor**, digitar `TROCAR` e clicar no
 botao. Mesmo efeito.
-
-}
-```

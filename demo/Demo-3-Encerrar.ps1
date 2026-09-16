@@ -14,7 +14,7 @@
     O que faz com -Executar:
       1  apaga a semente da cena LGPD (exclusao nomeada)
       2  rotaciona TRES segredos:
-           - app setting ChaveGestor : a chave que o gestor digita na tela
+        - chave do gestor         : rotacionada pela API, na tabela Configuracao
            - funcao VerStatus        : foi gravada em disco antes da troca pela de host
            - chave de HOST           : abre o painel administrativo
          A masterKey nao entra, porque nunca e exibida e rotacionar quebraria o
@@ -148,13 +148,13 @@ if (@($seed).Count -gt 0) { Tabela (@($seed) | Select-Object PartitionKey, RowKe
 if ($ManterSeedLgpd) { Escrever '  -> sera MANTIDA por -ManterSeedLgpd' }
 
 Escrever ('segredos a rotacionar em ' + $APP + ':')
-Escrever '  - app setting ChaveGestor        : chave que o gestor digita na tela'
+Escrever '  - chave do gestor                : tabela Configuracao, rotacionada pela API'
 Escrever '  - funcao VerStatus (default)     : foi gravada em disco antes da troca pela de host'
 Escrever '  - chave de HOST (functionKeys)   : abre o painel e fica em arquivo local na gravacao'
 Escrever '  masterKey NAO entra: nunca foi exibida, e rotacionar quebraria o disparo do Timer.'
 Escrever '  chave de FUNCAO do VerRelatorio NAO entra: desde o Incremento 8A ela nao'
 Escrever '  abre mais o relatorio, que e anonimo com cookie de sessao.'
-Escrever '  AVISO: gravar app setting REINICIA a Function App (alguns segundos fora).'
+Escrever '  Desde o Incremento 8C a troca da chave do gestor NAO reinicia a aplicacao.'
 Escrever ('chave do gestor antiga localizada no arquivo local: ' + $(if ($chaveGestorAntiga) { 'sim, ' + $chaveGestorAntiga.Length + ' caracteres' } else { 'nao (a prova do 401 sera pulada)' }))
 Escrever ('chave de host antiga localizada no arquivo local: ' + $(if ($chaveHostAntiga) { 'sim' } else { 'nao (a prova do 401 dela sera pulada)' }))
 
@@ -200,29 +200,36 @@ Escrever ''
 Escrever '--- 3. ROTACAO DOS SEGREDOS ---'
 $codRot = 0
 
-# ChaveGestor: o valor novo e gerado AQUI, nao pela Azure. 32 bytes de
-# RandomNumberGenerator em base64url, o mesmo formato do valor original.
-# O valor vai de variavel direto para o comando: nunca passa pelo console.
-$bytes = New-Object byte[] 32
-$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-$rng.GetBytes($bytes); $rng.Dispose()
-$nova = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_')
-$bytes = $null
-az functionapp config appsettings set --name $APP --resource-group $RG `
-    --settings "ChaveGestor=$nova" -o none 2>$null
-Escrever ('rotacao ChaveGestor exit        : ' + $LASTEXITCODE)
-$codRot = $codRot + $LASTEXITCODE
-if ($LASTEXITCODE -eq 0) {
-    $conf = az functionapp config appsettings list --name $APP --resource-group $RG `
-              --query "[?name=='ChaveGestor'].value | [0]" -o tsv 2>$null
-    Escrever ('chave nova gravada              : ' + $(if ($conf) { $conf.Length.ToString() + ' caracteres' } else { 'NAO CONFERIDA' }))
-    $igual = ($conf -eq $nova)
-    Escrever ('confere com a gerada            : ' + $igual)
-    $conf = $null
+# Incremento 8C: a chave do gestor NAO e mais app setting. Ela vive na tabela
+# Configuracao, como HASH, e a rotacao e uma chamada a API: sem restart.
+# Gravar app setting aqui recriaria um setting que o codigo ignora e reportaria
+# uma rotacao que nao rotacionou nada.
+# A chave de host e lida ANTES de ser rotacionada, logo abaixo.
+$kHost = az functionapp keys list --name $APP --resource-group $RG --query "functionKeys.default" -o tsv 2>$null
+if ([string]::IsNullOrWhiteSpace($kHost)) {
+    Escrever 'rotacao ChaveGestor             : FALHA, chave de host nao lida'
+    $codRot = $codRot + 1
+} else {
+    $corpo = @{ Acao = 'trocar'; Confirmacao = 'TROCAR' } | ConvertTo-Json -Compress
+    $nova = $null
+    try {
+        $rr = Invoke-WebRequest -Uri ($API + '/gerenciarchavegestor?code=' + $kHost) -Method Post `
+                -ContentType 'application/json' -Body $corpo -UseBasicParsing -TimeoutSec 90
+        $nova = ($rr.Content | ConvertFrom-Json).chave
+        Escrever ('rotacao ChaveGestor             : HTTP ' + [int]$rr.StatusCode)
+    } catch {
+        Escrever ('rotacao ChaveGestor             : FALHA HTTP ' + $(if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }))
+    }
+    if ([string]::IsNullOrWhiteSpace($nova)) {
+        $codRot = $codRot + 1
+    } else {
+        Escrever ('chave nova gerada               : ' + $nova.Length + ' caracteres (espera 43)')
+        $nova | Set-Clipboard
+        Escrever 'CHAVE NOVA do gestor no clipboard. Entregue ao gestor ANTES de limpar o clipboard.'
+    }
+    $nova = $null; $corpo = $null
 }
-$nova | Set-Clipboard
-Escrever 'CHAVE NOVA do gestor no clipboard. Entregue ao gestor ANTES de limpar o clipboard.'
-$nova = $null
+$kHost = $null
 
 az functionapp function keys set --name $APP --resource-group $RG --function-name VerStatus --key-name default -o none 2>$null
 Escrever ('rotacao funcao VerStatus exit   : ' + $LASTEXITCODE)
@@ -238,8 +245,8 @@ if ($codRot -ne 0) {
     Escrever 'O SEGREDO DO VIDEO AINDA PODE ESTAR VALIDO. Resolva antes de entregar.'
 }
 
-# ------------------------------------------------- 4. provar a revogacao
-Escrever ''
+    # A troca nao reinicia mais o app (Incremento 8C), mas o laco fica: cobre
+    # lentidao de primeiro acesso depois de ociosidade.
 Escrever '--- 4. PROVA DA REVOGACAO DA CHAVE DO GESTOR ---'
 if (-not $chaveGestorAntiga) {
     Escrever 'chave antiga nao localizada em disco; teste pulado.'

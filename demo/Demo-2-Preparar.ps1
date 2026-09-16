@@ -30,8 +30,9 @@
     SEGREDO: o segredo TOTP e a chave de acesso do gestor vao para
     C:\demo-gpsequipe (fora do repo e fora do OneDrive). A URL do relatorio NAO
     e mais segredo: pode ser mostrada na tela. O Demo-3-Encerrar.ps1 apaga essa
-    pasta; a chave a rotacionar agora e o app setting ChaveGestor, nao mais a
-    chave de funcao do VerRelatorio.
+    pasta.
+    INCREMENTO 8C: a chave do gestor vive na tabela Configuracao como HASH e nao
+    pode ser lida. O passo 8 ROTACIONA a chave e grava a nova no arquivo local.
     Somente texto ASCII: PowerShell 5.1 le arquivo sem BOM como ANSI.
 #>
 [CmdletBinding()]
@@ -415,17 +416,30 @@ if ($SemSeedLgpd) {
 # ------------------------------------------------- 8. chave de acesso do gestor
 Escrever ''
 Escrever '--- 8. CHAVE DE ACESSO DO GESTOR ---'
-New-Item -ItemType Directory -Path $PASTA -Force | Out-Null
-# Incremento 8A: a porta do relatorio nao e mais a chave de FUNCAO do
-# VerRelatorio, e sim o app setting ChaveGestor, digitado numa tela. O filtro
-# nomeia a chave exata: filtro por !contains e case-sensitive e foi o que
-# vazou a AccountKey no incidente da Secao 8.
-$kGestor = az functionapp config appsettings list --name $APP --resource-group $RG `
-             --query "[?name=='ChaveGestor'].value | [0]" -o tsv 2>$null
+# Incremento 8C: a chave do gestor NAO pode mais ser lida. A tabela Configuracao
+# guarda apenas o hash dela. Para a gravacao o caminho e ROTACIONAR: a API
+# devolve a chave nova uma unica vez, e ela vai para o arquivo local.
+# O Demo-3 rotaciona de novo no fim, matando esta.
 $urlRel = $API + '/verrelatorio'
+$kHost = az functionapp keys list --name $APP --resource-group $RG --query "functionKeys.default" -o tsv 2>$null
+$kGestor = $null
+if ([string]::IsNullOrWhiteSpace($kHost)) {
+    Escrever 'FALHA: chave de host nao lida; sem ela nao da para rotacionar.'
+    Marcar 'chave do gestor' $false 'chave de host nao lida'
+} else {
+    $corpo = @{ Acao = 'trocar'; Confirmacao = 'TROCAR' } | ConvertTo-Json -Compress
+    try {
+        $rr = Invoke-WebRequest -Uri ($API + '/gerenciarchavegestor?code=' + $kHost) -Method Post `
+                -ContentType 'application/json' -Body $corpo -UseBasicParsing -TimeoutSec 90
+        $kGestor = ($rr.Content | ConvertFrom-Json).chave
+    } catch {
+        Escrever ('FALHA ao rotacionar: HTTP ' + $(if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }))
+    }
+    $corpo = $null
+}
+$kHost = $null
 if ([string]::IsNullOrWhiteSpace($kGestor)) {
-    Escrever 'FALHA: app setting ChaveGestor nao lido.'
-    Marcar 'chave do gestor' $false 'ChaveGestor nao lida'
+    Marcar 'chave do gestor' $false 'nao foi possivel obter a chave nova'
 } else {
     $txt = @(
         'GpsEquipe - segredos TEMPORARIOS da gravacao',
@@ -433,6 +447,9 @@ if ([string]::IsNullOrWhiteSpace($kGestor)) {
         '',
         'Chave de acesso do gestor (digitar na tela de entrada do relatorio):',
         $kGestor,
+        '',
+        'ATENCAO: esta chave foi RECEM-ROTACIONADA. A anterior parou de funcionar.',
+        'Ela nao pode ser lida de novo: o sistema guarda apenas o hash dela.',
         '',
         'URL do relatorio (NAO e segredo, pode aparecer na tela):',
         $urlRel,
@@ -442,8 +459,9 @@ if ([string]::IsNullOrWhiteSpace($kGestor)) {
     ) -join "`r`n"
     [IO.File]::WriteAllText($ARQ_SEG, $txt, [Text.UTF8Encoding]::new($false))
     Escrever ('arquivo gravado : ' + $ARQ_SEG)
-    Escrever ('chave lida      : ' + $kGestor.Length + ' caracteres (valor nunca impresso)')
-    Marcar 'chave do gestor' $true ('no arquivo local, ' + $kGestor.Length + ' caracteres')
+    Escrever ('chave nova      : ' + $kGestor.Length + ' caracteres (valor nunca impresso)')
+    Marcar 'chave do gestor' $true ('rotacionada, no arquivo local, ' + $kGestor.Length + ' caracteres')
+    $kGestor = $null
 }
 
 # ------------------------------------------------- 9. atalhos de cena
@@ -513,11 +531,13 @@ function Ver-LogLgpd {
   az monitor app-insights query --app $APP --resource-group $RG --analytics-query "traces | where timestamp > ago(20m) | where message has 'Anonimizacao LGPD' | project timestamp, message | order by timestamp desc | take 3" --query "tables[0].rows" -o tsv
 }
 
-# Incremento 8A: a chave do gestor NAO fica escrita neste arquivo, para nao
-# aparecer na tela se ele for aberto na gravacao. Le do Azure na hora.
+# Incremento 8C: a chave do gestor NAO pode ser lida do Azure: a tabela guarda
+# apenas o hash. O Demo-2 rotacionou e gravou no arquivo de segredos local.
 function Copiar-ChaveGestor {
-  $k = az functionapp config appsettings list --name $APP --resource-group $RG --query "[?name=='ChaveGestor'].value | [0]" -o tsv 2>$null
-  if ([string]::IsNullOrWhiteSpace($k)) { return 'FALHA: ChaveGestor nao lida.' }
+  $a = '__ARQSEG__'
+  if (-not (Test-Path $a)) { return 'FALHA: arquivo de segredos ausente. Rode o Demo-2-Preparar.ps1.' }
+  $k = Get-Content $a | Where-Object { $_ -match '^[A-Za-z0-9_-]{43}$' } | Select-Object -First 1
+  if ([string]::IsNullOrWhiteSpace($k)) { return 'FALHA: chave de 43 caracteres nao encontrada no arquivo.' }
   $k | Set-Clipboard
   $n = $k.Length; $k = $null
   'chave de ' + $n + ' caracteres no clipboard: cole na tela de entrada do relatorio.'
@@ -534,7 +554,8 @@ $modelo = $modelo.Replace('__SITE__', $SITE).
                   Replace('__RG__', $RG).
                   Replace('__APP__', $APP).
                   Replace('__PART__', $PART_LGPD).
-                  Replace('__CEL__', $CEL)
+                  Replace('__CEL__', $CEL).
+                  Replace('__ARQSEG__', [string]$ARQ_SEG)
 [IO.File]::WriteAllText($ARQ_CENA, $modelo, [Text.UTF8Encoding]::new($false))
 Escrever ('gravado: ' + $ARQ_CENA)
 Escrever 'Na gravacao, carregue com:  . C:\demo-gpsequipe\cena.ps1'
@@ -601,7 +622,6 @@ Escrever '  - fechar local.settings.json e qualquer aba com connection string'
 Escrever '  - Clear-Host e fonte do terminal em 18 ou mais'
 Escrever '  - notificacoes do Windows e do Teams em silencio'
 Escrever ''
-Escrever 'DEPOIS de gravar: .\Demo-3-Encerrar.ps1  (previa) e depois -Executar'
-Escrever 'ATENCAO: o Demo-3 rotaciona a chave de funcao do VerRelatorio, que o'
-Escrever '         Incremento 8A tornou irrelevante. A chave a rotacionar agora'
+Escrever 'O Demo-3 rotaciona a chave do gestor pela API (tabela Configuracao),'
+Escrever '         a chave de funcao do VerStatus e a chave de host.'
 Escrever '         e o app setting ChaveGestor. Corrigir o Demo-3.'
