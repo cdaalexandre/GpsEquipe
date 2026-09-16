@@ -436,6 +436,25 @@ No cartão **Gestao de colaboradores**, com o número em dígitos:
 Essa chave é exibida uma única vez. Tela de painel é o pior lugar para exibir
 segredo de uso único. Use `.\Admin.ps1 -Habilitar`, que faz o cadastro **e** a
 chave num passo.
+## O cartao da chave de acesso do gestor
+
+Mostra onde a chave vive e quando foi trocada pela ultima vez.
+
+| Campo | O que diz |
+| --- | --- |
+| **Onde vive** | tabela `Configuracao` (hash), desde o Incremento 8C |
+| **Trocada em** | data e hora da ultima troca, em Brasilia |
+
+Para trocar: digite `TROCAR` no campo, clique em **Trocar chave** e confirme o
+alerta. O botao so libera com a palavra exata.
+
+⚠️ A chave nova vai para a AREA DE TRANSFERENCIA, nao para a tela. Cole em
+local seguro ANTES de copiar qualquer outra coisa: ela nao e exibida de novo.
+
+⚠️ A anterior morre na hora. Todos os gestores precisam receber a nova.
+
+Se o navegador bloquear a area de transferencia, a chave aparece num campo de
+texto, com aviso. Copie dali.
 
 ---
 
