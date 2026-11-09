@@ -20,6 +20,8 @@ pontos e o trajeto de cada número no dia corrente (horário de Brasília).
 
 O cadastro de colaboradores é feito pela linha de comando, direto na tabela.
 
+A página mostra ao colaborador um aviso curto sobre o tratamento dos dados. Ele diz o que é enviado, quando o envio pausa, quem vê os pontos e como pedir a exclusão.
+
 ---
 
 ## Arquitetura
@@ -286,9 +288,6 @@ e nenhuma credencial de terceiro no frontend.
   voltou à proteção apenas por lista.
 - **Sem anonimização automática.** As coordenadas ficam com o número do celular
   por tempo indeterminado. A rotina de 90 dias da versão anterior foi retirada.
-- **Sem aviso de tratamento de dados no site.** O texto anterior descrevia
-  recursos que saíram e foi removido. Um aviso novo, fiel a esta versão, deve
-  entrar antes do uso com colaboradores reais.
 - **Chave única de gestor.** Ela prova posse de um segredo, não identidade:
   não diz qual gestor entrou.
 - **Sem histórico.** O mapa mostra só o dia corrente.
