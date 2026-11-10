@@ -19,4 +19,9 @@
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.0.7" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Remove="app\**" />
+    <None Remove="app\**" />
+    <Content Remove="app\**" />
+  </ItemGroup>
 </Project>

@@ -242,6 +242,31 @@ na tabela `Coordenadas`.
 
 ---
 
+## App Android (pasta `app/`)
+
+Cliente nativo em C# (.NET for Android) para rastrear com a tela apagada ou com o
+app fechado. O navegador pausa a página em segundo plano; o app usa um serviço em
+primeiro plano, com notificação fixa, e envia o mesmo JSON do site para
+`/api/recebercoordenadas`. O backend não muda.
+
+| Arquivo | Conteúdo |
+| --- | --- |
+| `app/MainActivity.cs` | tela: número, Iniciar/Parar, status e aviso de dados |
+| `app/RastreioService.cs` | serviço em primeiro plano: GPS a cada 10 s, um envio por vez, para no `403` |
+| `app/GpsEquipeApp.csproj` | projeto `net10.0-android`, mínimo Android 7 (API 24) |
+| `app/Directory.Build.props` | caminhos locais do Android SDK e do JDK |
+
+Requisitos: workload `android` do .NET, JDK 17 e Android SDK, instalado pelo alvo
+`InstallAndroidDependencies`.
+
+```powershell
+dotnet publish app\GpsEquipeApp.csproj -c Release -f net10.0-android `
+  -p:AndroidPackageFormat=apk -o app\saida
+```
+
+O APK sai assinado com a chave de depuração e é instalado fora da loja.
+---
+
 ## Decisões de projeto
 
 **Isolated worker.** O suporte ao modelo in-process do .NET no Azure Functions

@@ -264,3 +264,6 @@ __pycache__/
 *.pyc
 # Backups locais do Incremento 8C (desfazer de curto prazo)
 *.bak-*
+
+# APK gerado pelo dotnet publish do app
+app/saida/
