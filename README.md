@@ -59,6 +59,53 @@ destinado a desenvolvimento e teste.
 
 ---
 
+## Diagramas
+
+Todos os diagramas abaixo estão também reunidos em
+[`docs/GpsEquipe_Diagramas.pdf`](docs/GpsEquipe_Diagramas.pdf), em A4 paisagem
+e formato vetorial, para apresentação. Clique numa imagem para abri-la em
+tamanho real.
+
+### Arquitetura geral
+
+Clientes, funções do Azure Functions e tabelas do Table Storage.
+
+![Arquitetura geral](docs/diagramas/01-arquitetura.svg)
+
+### Modelo de execução: in-process × isolated worker
+
+Na v1, o código das funções rodava dentro do processo do host. Na v2, o host e
+o worker com o código são processos separados, e o worker usa .NET 10.
+
+![In-process e isolated worker](docs/diagramas/02-inprocess-vs-isolated.svg)
+
+### Caso de uso
+
+![Diagrama de caso de uso](docs/diagramas/03-caso-de-uso.svg)
+
+### Diagrama de classe
+
+Membros conforme o código-fonte. `$` marca membro estático.
+
+![Diagrama de classe](docs/diagramas/04-classe.svg)
+
+### Envio de coordenada
+
+![Fluxo de envio de coordenada](docs/diagramas/05-fluxo-envio.svg)
+
+![Diagrama de sequência do envio de coordenada](docs/diagramas/06-sequencia-envio.svg)
+
+### Acesso do gestor
+
+![Fluxo de acesso do gestor](docs/diagramas/07-fluxo-gestor.svg)
+
+![Diagrama de sequência do acesso do gestor](docs/diagramas/08-sequencia-gestor.svg)
+
+As fontes Mermaid do diagrama de classe e dos diagramas de sequência estão em
+`docs/diagramas/fontes/`.
+
+---
+
 ## Estrutura do repositório
 
 | Arquivo | Conteúdo |
@@ -72,6 +119,8 @@ destinado a desenvolvimento e teste.
 | `index.html` | site do colaborador (captura e envio do GPS) |
 | `host.json` | configuração do host do Functions |
 | `GpsEquipe.csproj` | projeto .NET |
+| `docs/diagramas/` | diagramas em SVG e fontes Mermaid |
+| `docs/GpsEquipe_Diagramas.pdf` | diagramas reunidos para apresentação |
 
 `local.settings.json` está fora do versionamento.
 

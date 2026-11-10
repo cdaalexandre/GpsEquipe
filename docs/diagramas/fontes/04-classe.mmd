@@ -1,0 +1,72 @@
+classDiagram
+  direction TB
+  class Program {
+    <<top-level>>
+    ConfigureFunctionsWebApplication()
+  }
+  class ReceberCoordenadas {
+    -ILogger _logger
+    -string FalhaIdentificacao$
+    +Run(HttpRequest req) Task~IActionResult~
+  }
+  class CoordenadaRecebida {
+    +string? Celular
+    +double Latitude
+    +double Longitude
+  }
+  class VerRelatorio {
+    -ILogger _logger
+    -string NomeCookie$
+    +Run(HttpRequest req) Task~IActionResult~
+    -Porta(int status, string? erro)$ IActionResult
+  }
+  class SegurancaToken {
+    <<static>>
+    +int HorasValidade$
+    -string VersaoGestor$
+    +EmitirGestor(byte[] chave)$ Token e ExpiraEm
+    +ValidarGestor(byte[] chave, string? token)$ bool
+    +ConferirSegredo(string? digitado, string? esperado)$ bool
+    +LerChave(string? base64)$ byte[]
+    -Assinar(byte[] chave, byte[] dados)$ byte[]
+    +ParaBase64Url(byte[] bytes)$ string
+    +DeBase64Url(string texto)$ byte[]
+  }
+  class ChaveGestorStore {
+    <<static>>
+    -string NomeTabela$
+    -string Particao$
+    -string Linha$
+    -Cliente()$ TableClient
+    -Hash(string valor)$ string
+    -LerAsync()$ Task~TableEntity~
+    -HashEsperadoAsync()$ Task~string~
+    +ValidarAsync(string? digitada)$ Task~bool~
+  }
+  class ITableEntity {
+    <<interface>>
+    +string PartitionKey
+    +string RowKey
+    +DateTimeOffset? Timestamp
+    +ETag ETag
+  }
+  class CoordenadaEntidade {
+    +string Celular
+    +double Latitude
+    +double Longitude
+    +DateTimeOffset DataHoraUtc
+  }
+  class FuncionarioPermitidoEntidade
+  ITableEntity <|.. CoordenadaEntidade
+  ITableEntity <|.. FuncionarioPermitidoEntidade
+  ReceberCoordenadas *-- CoordenadaRecebida : aninhada
+  ReceberCoordenadas ..> FuncionarioPermitidoEntidade : consulta
+  ReceberCoordenadas ..> CoordenadaEntidade : grava
+  VerRelatorio ..> CoordenadaEntidade : le
+  VerRelatorio ..> ChaveGestorStore : ValidarAsync
+  VerRelatorio ..> SegurancaToken : EmitirGestor, ValidarGestor
+  ChaveGestorStore ..> SegurancaToken : ConferirSegredo
+  Program ..> ReceberCoordenadas : hospeda
+  Program ..> VerRelatorio : hospeda
+  note for CoordenadaEntidade "PK = data UTC yyyy-MM-dd<br>RK = GUID sem hifens"
+  note for FuncionarioPermitidoEntidade "PK = FUNCIONARIO<br>RK = celular so digitos"

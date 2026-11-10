@@ -1,0 +1,33 @@
+sequenceDiagram
+  participant G as Gestor
+  participant N as Navegador
+  participant V as VerRelatorio
+  participant K as ChaveGestorStore
+  participant Cfg as Configuracao
+  participant Tk as SegurancaToken
+  participant Co as Coordenadas
+  N->>V: GET sem cookie
+  V->>Tk: ValidarGestor(chaveHmac, null)
+  Tk-->>V: false
+  V-->>N: 401 Porta, tela de entrada
+  G->>N: Digita a chave
+  N->>V: POST form chave
+  V->>K: ValidarAsync(chave)
+  K->>Cfg: GetEntityIfExistsAsync(CONFIG, ChaveGestor)
+  Cfg-->>K: Hash
+  K->>Tk: ConferirSegredo(SHA-256 da digitada, Hash)
+  Tk-->>K: bool
+  K-->>V: bool
+  alt Chave correta
+    V->>Tk: EmitirGestor(chaveHmac)
+    V-->>N: 303 e cookie gpsequipe_gestor, 8 h
+    N->>V: GET com cookie
+    V->>Tk: ValidarGestor(chaveHmac, cookie)
+    Tk-->>V: true
+    V->>Co: QueryAsync, PK hoje ou amanha UTC
+    Co-->>V: Registros
+    V->>V: Filtra pelo dia de Brasilia
+    V-->>N: 200 HTML com mapa Leaflet
+  else Chave incorreta
+    V-->>N: 401 Porta, Chave invalida
+  end

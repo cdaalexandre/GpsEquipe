@@ -1,0 +1,25 @@
+sequenceDiagram
+  participant C as Colaborador
+  participant S as Site ou app
+  participant F as ReceberCoordenadas
+  participant L as FuncionariosPermitidos
+  participant T as Coordenadas
+  C->>S: Inicia rastreamento
+  loop A cada 10 s
+    S->>F: POST Celular, Latitude, Longitude
+    alt TabelaConnectionString ausente
+      F-->>S: 500
+    else JSON invalido ou sem Celular
+      F-->>S: 400
+    else Requisicao valida
+      F->>F: Normaliza numero, so digitos
+      F->>L: GetEntityIfExistsAsync(FUNCIONARIO, celular)
+      alt HasValue falso
+        F->>F: LogWarning com o numero
+        F-->>S: 403 Identificacao invalida
+      else HasValue verdadeiro
+        F->>T: AddEntityAsync(PK data UTC, RK GUID, DataHoraUtc)
+        F-->>S: 200 Coordenada recebida com sucesso
+      end
+    end
+  end
