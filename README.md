@@ -15,7 +15,7 @@ O colaborador abre uma página no navegador do celular, informa o próprio núme
 toca em **Iniciar rastreamento**. A página envia a coordenada do GPS a cada 10
 segundos. A API confere o número contra a lista de autorizados e grava o ponto.
 
-Para envio com a tela apagada, há também um app Android nativo (pasta pp/), que manda o mesmo dado para a mesma API e só para quando o colaborador toca em DESLIGAR.
+Para envio com a tela apagada, há também um app Android nativo (pasta `app/`), que manda o mesmo dado para a mesma API e só para quando o colaborador toca em DESLIGAR.
 
 O gestor abre o relatório, digita a chave de acesso numa tela e vê, num mapa, os
 pontos e o trajeto de cada número no dia corrente (horário de Brasília).
