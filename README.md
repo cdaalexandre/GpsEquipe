@@ -15,6 +15,8 @@ O colaborador abre uma página no navegador do celular, informa o próprio núme
 toca em **Iniciar rastreamento**. A página envia a coordenada do GPS a cada 10
 segundos. A API confere o número contra a lista de autorizados e grava o ponto.
 
+Para envio com a tela apagada, há também um app Android nativo (pasta pp/), que manda o mesmo dado para a mesma API e só para quando o colaborador toca em DESLIGAR.
+
 O gestor abre o relatório, digita a chave de acesso numa tela e vê, num mapa, os
 pontos e o trajeto de cada número no dia corrente (horário de Brasília).
 
@@ -244,16 +246,28 @@ na tabela `Coordenadas`.
 
 ## App Android (pasta `app/`)
 
-Cliente nativo em C# (.NET for Android) para rastrear com a tela apagada ou com o
-app fechado. O navegador pausa a página em segundo plano; o app usa um serviço em
-primeiro plano, com notificação fixa, e envia o mesmo JSON do site para
+Cliente nativo em C# (.NET for Android), versão 3.0, mínimo Android 7 (API 24).
+O navegador pausa a página com a tela apagada; o app usa um serviço em primeiro
+plano, com notificação fixa, e envia o mesmo JSON do site para
 `/api/recebercoordenadas`. O backend não muda.
+
+| Comportamento | Como funciona |
+| --- | --- |
+| Número confirmado | ao tocar em LIGAR, o app pede confirmação do número formatado; depois, mostra o número em destaque e esconde o campo |
+| Envio visível | faixa ENVIANDO (verde, envio aceito nos últimos 30 s), LIGADO, AGUARDANDO ENVIO (laranja) ou DESLIGADO (vermelho); abaixo, total de envios, horário do último, última posição e resposta do servidor |
+| Só para no botão | o envio desliga apenas em DESLIGAR, com confirmação; o `403` avisa e continua tentando |
+| Religamento | o serviço volta sozinho depois de o app ser removido dos recentes, de ser encerrado pelo sistema e de o celular reiniciar |
+| Posição | Fused Location do Google Play Services, alta precisão a cada 10 s; sem Play Services, usa GPS e rede pelo `LocationManager` |
+| Filtro | posição com erro acima de 100 m é descartada |
+| Diagnóstico na tela | fonte da posição, ciclos sem posição, posições descartadas e inícios do serviço, com horário |
+| Bateria | botão que abre o pedido do Android para isentar o app da otimização de bateria |
 
 | Arquivo | Conteúdo |
 | --- | --- |
-| `app/MainActivity.cs` | tela: número, Iniciar/Parar, status e aviso de dados |
-| `app/RastreioService.cs` | serviço em primeiro plano: GPS a cada 10 s, um envio por vez, para no `403` |
-| `app/GpsEquipeApp.csproj` | projeto `net10.0-android`, mínimo Android 7 (API 24) |
+| `app/MainActivity.cs` | tela, permissões, confirmação do número, estado e diagnóstico |
+| `app/RastreioService.cs` | serviço em primeiro plano: posição, envio a cada 10 s, um envio por vez, religamento |
+| `app/BootReceiver.cs` | religa o envio depois de reiniciar o celular, se ele estava ligado |
+| `app/GpsEquipeApp.csproj` | projeto `net10.0-android`, pacote `Xamarin.GooglePlayServices.Location` 121.4.0.1 |
 | `app/Directory.Build.props` | caminhos locais do Android SDK e do JDK |
 
 Requisitos: workload `android` do .NET, JDK 17 e Android SDK, instalado pelo alvo
@@ -264,7 +278,7 @@ dotnet publish app\GpsEquipeApp.csproj -c Release -f net10.0-android `
   -p:AndroidPackageFormat=apk -o app\saida
 ```
 
-O APK sai assinado com a chave de depuração e é instalado fora da loja.
+O APK é instalado fora da loja.
 ---
 
 ## Decisões de projeto
@@ -316,6 +330,8 @@ e nenhuma credencial de terceiro no frontend.
 - **Chave única de gestor.** Ela prova posse de um segredo, não identidade:
   não diz qual gestor entrou.
 - **Sem histórico.** O mapa mostra só o dia corrente.
+- **Suspensão pelo fabricante.** Celulares Samsung mantêm uma lista própria de "Apps em suspensão", fora do alcance do app. O GpsEquipe precisa ser retirado dela à mão, nas configurações de bateria; sem isso, o envio pode ter lacunas com a tela apagada.
+- **APK de distribuição direta.** O app é assinado com a chave de depuração e instalado fora da loja.
 
 ---
 
