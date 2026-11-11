@@ -18,7 +18,7 @@ segundos. A API confere o número contra a lista de autorizados e grava o ponto.
 Para envio com a tela apagada, há também um app Android nativo (pasta `app/`), que manda o mesmo dado para a mesma API e só para quando o colaborador toca em DESLIGAR.
 
 O gestor abre o relatório, digita a chave de acesso numa tela e vê, num mapa, os
-pontos e o trajeto de cada número no dia corrente (horário de Brasília).
+pontos e o trajeto de cada número no dia escolhido (horário de Brasília). Uma lista mostra os dias com trajeto nos últimos 31, e o relatório abre no mais recente.
 
 O cadastro de colaboradores é feito pela linha de comando, direto na tabela.
 
@@ -163,6 +163,7 @@ oráculo de quem é colaborador. O número recusado vai para o log.
 GET  /api/verrelatorio                        -> 401 com a tela de entrada
 POST /api/verrelatorio   (form: chave=...)    -> 303 + cookie de sessão
 GET  /api/verrelatorio   (com o cookie)       -> 200 com o mapa
+GET  /api/verrelatorio?dia=2026-11-10  (com o cookie) -> 200 com o mapa daquele dia
 ```
 
 O cookie é `HttpOnly`, `Secure`, `SameSite=Strict` e vale por 8 horas. O campo
@@ -378,7 +379,6 @@ e nenhuma credencial de terceiro no frontend.
   por tempo indeterminado. A rotina de 90 dias da versão anterior foi retirada.
 - **Chave única de gestor.** Ela prova posse de um segredo, não identidade:
   não diz qual gestor entrou.
-- **Sem histórico.** O mapa mostra só o dia corrente.
 - **Suspensão pelo fabricante.** Celulares Samsung mantêm uma lista própria de "Apps em suspensão", fora do alcance do app. O GpsEquipe precisa ser retirado dela à mão, nas configurações de bateria; sem isso, o envio pode ter lacunas com a tela apagada.
 - **APK de distribuição direta.** O app é assinado com a chave de depuração e instalado fora da loja.
 

@@ -89,9 +89,30 @@ public class VerRelatorio
         var fuso = TimeSpan.FromHours(-3);
         var hoje = DateTimeOffset.UtcNow.ToOffset(fuso).Date;
 
-        // Reducao (nov/2026): sem filtro de periodo. O mapa mostra o dia corrente.
-        var inicio = hoje;
-        var fim = hoje;
+        // Novo: historico. Dias de Brasilia com pontos nos ultimos 31 dias.
+        // Le so a coluna DataHoraUtc e conta por dia local, porque um dia de
+        // Brasilia espalha pontos por duas particoes UTC (21h a 24h caem na seguinte).
+        var corte = hoje.AddDays(-31);
+        var consultaDias = new TableClient(conexao, "Coordenadas");
+        var porDia = new SortedDictionary<DateTime, int>();
+        await foreach (var e in consultaDias.QueryAsync<TableEntity>(
+            "PartitionKey ge '" + corte.ToString("yyyy-MM-dd", inv) + "'",
+            select: new[] { "DataHoraUtc" }))
+        {
+            var dt = e.GetDateTimeOffset("DataHoraUtc");
+            if (dt is null) { continue; }
+            var d = dt.Value.ToOffset(fuso).Date;
+            if (d < corte) { continue; }
+            porDia[d] = porDia.TryGetValue(d, out var n) ? n + 1 : 1;
+        }
+
+        // Novo: ?dia=yyyy-MM-dd escolhe o dia. Sem parametro, o mais recente com pontos.
+        if (!DateTime.TryParseExact(req.Query["dia"].ToString(), "yyyy-MM-dd", inv, DateTimeStyles.None, out var alvo))
+        {
+            alvo = porDia.Count > 0 ? porDia.Keys.Max() : hoje;
+        }
+        var inicio = alvo;
+        var fim = alvo;
         var dias = 1;
 
         // Uma cláusula por partição: consulta de partição, não varredura da tabela.
@@ -135,6 +156,17 @@ public class VerRelatorio
         html.Append("</style></head><body>");
         html.Append("<h1>Diretoria de Ensino Centro Oeste - SEDUC/SP</h1>");
         html.Append("<p>Trajetos de ").Append(hoje.ToString("dd/MM/yyyy", inv)).Append(". Recarregue a pagina para ver pontos novos.</p>");
+
+        // Novo: lista dos dias com pontos, do mais recente ao mais antigo, como links.
+        html.Append("<div style='margin:10px 0 14px;line-height:1.9'>Dias com trajeto nos últimos 31 dias. ");
+        if (porDia.Count == 0) { html.Append("Nenhum."); }
+        foreach (var kv in porDia.Reverse())
+        {
+            var rotulo = kv.Key.ToString("dd/MM", inv) + " (" + kv.Value + " pontos)";
+            if (kv.Key == alvo) { html.Append("<b style='margin-right:14px'>").Append(rotulo).Append("</b>"); }
+            else { html.Append("<a style='margin-right:14px' href='?dia=").Append(kv.Key.ToString("yyyy-MM-dd", inv)).Append("'>").Append(rotulo).Append("</a>"); }
+        }
+        html.Append("</div>");
 
         if (registros.Count == 0)
         {
